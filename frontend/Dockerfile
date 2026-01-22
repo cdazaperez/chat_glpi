@@ -1,18 +1,18 @@
 # Helpdesk AI Frontend Dockerfile
-# Multi-stage build for Next.js production
+# Multi-stage build for Next.js production using Bun
 
 # Dependencies stage
-FROM node:20-alpine AS deps
+FROM oven/bun:1 AS deps
 WORKDIR /app
 
 # Copy package files
-COPY package.json package-lock.json* ./
+COPY package.json bun.lockb* ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN bun install --frozen-lockfile --production
 
 # Builder stage
-FROM node:20-alpine AS builder
+FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Copy dependencies
@@ -31,9 +31,9 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
     NEXT_TELEMETRY_DISABLED=1
 
 # Build the application
-RUN npm run build
+RUN bun run build
 
-# Production stage
+# Production stage - use node for running (more stable for Next.js)
 FROM node:20-alpine AS runner
 WORKDIR /app
 

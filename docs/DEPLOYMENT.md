@@ -67,6 +67,56 @@ curl http://localhost:8000/health/ready
 - API Docs: http://localhost:8000/docs (dev only)
 - API ReDoc: http://localhost:8000/redoc (dev only)
 
+## Local Development without Docker
+
+If you prefer to run the services locally without Docker:
+
+### Backend (Python)
+
+```bash
+cd backend
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the server
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend (Bun)
+
+The frontend uses **Bun** as the package manager and runtime.
+
+```bash
+# Install Bun (if not already installed)
+# macOS/Linux:
+curl -fsSL https://bun.sh/install | bash
+
+# Install dependencies
+cd frontend
+bun install
+
+# Run development server
+bun run dev
+```
+
+The frontend will be available at http://localhost:3000
+
+### Redis (Optional for local dev)
+
+```bash
+# Using Docker for Redis only
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+
+# Or install locally on macOS
+brew install redis
+brew services start redis
+```
+
 ## Production Deployment
 
 ### Option A: Docker Compose (Simple)

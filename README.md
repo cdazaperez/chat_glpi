@@ -22,6 +22,7 @@ Helpdesk AI enables IT support teams and end-users to get instant answers by que
 - Docker and Docker Compose
 - GLPI instance with REST API enabled
 - OpenAI API key
+- (Local dev) Bun runtime for frontend
 
 ### 1. Clone and Configure
 
@@ -177,6 +178,24 @@ All configuration via environment variables. See `.env.example` for complete lis
 | `OPENAI_MODEL` | Yes | Model to use (e.g., gpt-4.1-mini) |
 | `APP_ALLOWED_ORIGINS` | No | CORS origins (default: localhost:3000) |
 | `APP_RATE_LIMIT_RPM` | No | Rate limit per minute (default: 30) |
+
+## Local Development (without Docker)
+
+### Backend
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend (using Bun)
+```bash
+cd frontend
+bun install
+bun run dev
+```
 
 ## Testing
 
