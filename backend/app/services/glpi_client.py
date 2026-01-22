@@ -86,6 +86,7 @@ class GLPIClient:
         self._session_token: Optional[str] = None
         self._session_expires: Optional[datetime] = None
         self._cache = cache
+        self._cache_hits: int = 0
 
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout),
@@ -183,10 +184,22 @@ class GLPIClient:
         if not self._cache:
             return None
         try:
-            return await self._cache.get(key)
+            result = await self._cache.get(key)
+            if result is not None:
+                self._cache_hits += 1
+            return result
         except Exception as e:
             logger.warning(f"Cache get error: {e}")
             return None
+
+    @property
+    def cache_hits(self) -> int:
+        """Get the number of cache hits since last reset."""
+        return self._cache_hits
+
+    def reset_cache_hits(self):
+        """Reset the cache hits counter."""
+        self._cache_hits = 0
 
     async def _set_cached(self, key: str, value: Any, ttl: int):
         """Set value in cache."""

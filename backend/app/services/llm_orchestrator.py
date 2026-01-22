@@ -274,6 +274,7 @@ class LLMOrchestrator:
         self._references: List[Reference] = []
         self._sources_consulted: List[str] = []
         self._tokens_used: int = 0
+        self._cache_hit: bool = False
 
     def _check_guardrails(self, message: str):
         """Check message against guardrails."""
@@ -541,6 +542,10 @@ Description:
         self._references = []
         self._sources_consulted = []
         self._tokens_used = 0
+        self._cache_hit = False
+
+        # Reset GLPI client cache hit counter
+        self.glpi.reset_cache_hits()
 
         # Check guardrails
         self._check_guardrails(message)
@@ -609,6 +614,9 @@ Description:
             # Determine suggested actions
             suggested_actions = self._determine_suggested_actions(response_text)
 
+            # Track if any GLPI results came from cache
+            self._cache_hit = self.glpi.cache_hits > 0
+
             processing_time = int((time.time() - start_time) * 1000)
             logger.info(
                 "Chat message processed",
@@ -616,7 +624,8 @@ Description:
                     "processing_time_ms": processing_time,
                     "tokens_used": self._tokens_used,
                     "references_count": len(self._references),
-                    "sources": list(set(self._sources_consulted))
+                    "sources": list(set(self._sources_consulted)),
+                    "cache_hit": self._cache_hit,
                 }
             )
 
@@ -681,3 +690,8 @@ Description:
     def sources_consulted(self) -> List[str]:
         """Get the list of sources consulted."""
         return list(set(self._sources_consulted))
+
+    @property
+    def cache_hit(self) -> bool:
+        """Check if any GLPI results were served from cache."""
+        return self._cache_hit
