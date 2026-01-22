@@ -1,0 +1,106 @@
+# Helpdesk AI - Docker Compose Configuration
+# For local development and testing
+
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: helpdesk-ai-backend
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      # GLPI Configuration
+      - GLPI_BASE_URL=${GLPI_BASE_URL}
+      - GLPI_APP_TOKEN=${GLPI_APP_TOKEN}
+      - GLPI_USERNAME=${GLPI_USERNAME}
+      - GLPI_PASSWORD=${GLPI_PASSWORD}
+      - GLPI_SESSION_TIMEOUT_MINUTES=${GLPI_SESSION_TIMEOUT_MINUTES:-30}
+      - GLPI_MAX_RETRIES=${GLPI_MAX_RETRIES:-3}
+      - GLPI_TIMEOUT_SECONDS=${GLPI_TIMEOUT_SECONDS:-30}
+      # OpenAI Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - OPENAI_ORG_ID=${OPENAI_ORG_ID:-}
+      - OPENAI_PROJECT_ID=${OPENAI_PROJECT_ID:-}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.2}
+      - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS:-800}
+      - OPENAI_TIMEOUT_SECONDS=${OPENAI_TIMEOUT_SECONDS:-60}
+      - OPENAI_RETRIES=${OPENAI_RETRIES:-3}
+      # App Configuration
+      - APP_ENV=${APP_ENV:-dev}
+      - APP_PORT=8000
+      - APP_LOG_LEVEL=${APP_LOG_LEVEL:-info}
+      - APP_ALLOWED_ORIGINS=${APP_ALLOWED_ORIGINS:-http://localhost:3000}
+      - APP_RATE_LIMIT_RPM=${APP_RATE_LIMIT_RPM:-30}
+      - APP_SESSION_TTL_MINUTES=${APP_SESSION_TTL_MINUTES:-60}
+      - APP_MAX_MESSAGE_LENGTH=${APP_MAX_MESSAGE_LENGTH:-4000}
+      - APP_SECRET_KEY=${APP_SECRET_KEY:-}
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_KB_CACHE_TTL=${REDIS_KB_CACHE_TTL:-3600}
+      - REDIS_TICKET_CACHE_TTL=${REDIS_TICKET_CACHE_TTL:-900}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - helpdesk-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        - NEXT_PUBLIC_APP_TITLE=${NEXT_PUBLIC_APP_TITLE:-Helpdesk AI}
+        - NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-SkillNet}
+    container_name: helpdesk-ai-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_APP_TITLE=${NEXT_PUBLIC_APP_TITLE:-Helpdesk AI}
+      - NEXT_PUBLIC_COMPANY_NAME=${NEXT_PUBLIC_COMPANY_NAME:-SkillNet}
+    depends_on:
+      - backend
+    networks:
+      - helpdesk-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: helpdesk-ai-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - helpdesk-network
+
+networks:
+  helpdesk-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

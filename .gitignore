@@ -1,0 +1,80 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Node.js
+node_modules/
+.next/
+out/
+.nuxt/
+.cache/
+*.tsbuildinfo
+.npm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Docker
+.docker/
+
+# SSL certificates (production)
+infra/nginx/ssl/*.pem
+infra/nginx/ssl/*.key
+infra/nginx/ssl/*.crt
+
+# Redis data
+dump.rdb
+
+# Coverage
+coverage/
+*.lcov
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# Temporary files
+tmp/
+temp/
+*.tmp
