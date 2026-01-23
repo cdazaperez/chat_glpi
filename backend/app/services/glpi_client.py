@@ -453,7 +453,7 @@ class GLPIClient:
             payload["input"]["knowbaseitemcategories_id"] = category_id
 
         try:
-            result = await self._request("POST", "KnowbaseItem", json=payload)
+            result = await self._request("POST", "KnowbaseItem", json_data=payload)
 
             if result and isinstance(result, dict):
                 article_id = result.get("id")
