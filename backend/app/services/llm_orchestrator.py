@@ -101,7 +101,7 @@ TOOLS = [
                     "is_faq": {
                         "type": "boolean",
                         "description": "Whether this is a FAQ article (default: false)",
-                        "default": false
+                        "default": False
                     }
                 },
                 "required": ["name", "content"]
