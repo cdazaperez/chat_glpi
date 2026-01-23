@@ -10,9 +10,18 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import get_settings
-from app.core.logging import get_logger, set_correlation_id, get_correlation_id
+from app.core.logging import get_logger, set_correlation_id, get_correlation_id, StructuredLogger
 
-logger = get_logger(__name__)
+# Use lazy logger initialization to ensure StructuredLogger is used
+_logger: StructuredLogger = None
+
+
+def _get_logger() -> StructuredLogger:
+    """Get the logger instance, creating it lazily."""
+    global _logger
+    if _logger is None:
+        _logger = get_logger(__name__)
+    return _logger
 
 
 class RateLimiter:
@@ -81,7 +90,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         is_limited, retry_after = self.limiter.is_rate_limited(request)
 
         if is_limited:
-            logger.warning(
+            _get_logger().warning(
                 "Rate limit exceeded",
                 data={
                     "client": request.client.host if request.client else "unknown",
@@ -127,7 +136,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
 
         # Log request
-        logger.info(
+        _get_logger().info(
             "Request started",
             data={
                 "method": request.method,
@@ -151,9 +160,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         }
 
         if response.status_code >= 400:
-            logger.warning("Request completed with error", data=log_data)
+            _get_logger().warning("Request completed with error", data=log_data)
         else:
-            logger.info("Request completed", data=log_data)
+            _get_logger().info("Request completed", data=log_data)
 
         # Add timing header
         response.headers["X-Response-Time"] = f"{duration_ms}ms"
