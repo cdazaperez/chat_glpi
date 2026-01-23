@@ -457,9 +457,6 @@ class GLPIClient:
 
         # Build search parameters
         params = {
-            "criteria[0][field]": "view",
-            "criteria[0][searchtype]": "contains",
-            "criteria[0][value]": query,
             "forcedisplay[0]": 1,   # ID
             "forcedisplay[1]": 2,   # Name
             "forcedisplay[2]": 21,  # Content
@@ -472,23 +469,41 @@ class GLPIClient:
             "order": "DESC",
         }
 
+        criteria_idx = 0
+
+        # Add text search criteria only if query is not empty
+        if query and query.strip():
+            # Search in ticket name (field 1)
+            params[f"criteria[{criteria_idx}][field]"] = 1
+            params[f"criteria[{criteria_idx}][searchtype]"] = "contains"
+            params[f"criteria[{criteria_idx}][value]"] = query.strip()
+            criteria_idx += 1
+            # Also search in content (field 21) with OR
+            params[f"criteria[{criteria_idx}][link]"] = "OR"
+            params[f"criteria[{criteria_idx}][field]"] = 21
+            params[f"criteria[{criteria_idx}][searchtype]"] = "contains"
+            params[f"criteria[{criteria_idx}][value]"] = query.strip()
+            criteria_idx += 1
+
         # Add status filter
-        criteria_idx = 1
         if status == "solved":
-            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
             params[f"criteria[{criteria_idx}][field]"] = 12
             params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
             params[f"criteria[{criteria_idx}][value]"] = self.STATUS_SOLVED
             criteria_idx += 1
         elif status == "closed":
-            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
             params[f"criteria[{criteria_idx}][field]"] = 12
             params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
             params[f"criteria[{criteria_idx}][value]"] = self.STATUS_CLOSED
             criteria_idx += 1
         elif status == "resolved":
             # Both solved and closed
-            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
             params[f"criteria[{criteria_idx}][field]"] = 12
             params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
             params[f"criteria[{criteria_idx}][value]"] = self.STATUS_SOLVED
@@ -500,7 +515,8 @@ class GLPIClient:
             criteria_idx += 1
 
         if category_id:
-            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
             params[f"criteria[{criteria_idx}][field]"] = 7
             params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
             params[f"criteria[{criteria_idx}][value]"] = category_id
