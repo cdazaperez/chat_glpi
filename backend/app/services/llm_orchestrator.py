@@ -81,6 +81,36 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "glpi_kb_create",
+            "description": "Create a new Knowledge Base article in GLPI. Use this to document solutions, procedures, or FAQs that can help resolve similar issues in the future.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Article title - should be clear and descriptive"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Article content - the solution, procedure, or information to document"
+                    },
+                    "category_id": {
+                        "type": "integer",
+                        "description": "Optional category ID for the article"
+                    },
+                    "is_faq": {
+                        "type": "boolean",
+                        "description": "Whether this is a FAQ article (default: false)",
+                        "default": false
+                    }
+                },
+                "required": ["name", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "glpi_ticket_search",
             "description": "Search for resolved/closed tickets in GLPI. Use this to find similar past issues and their solutions.",
             "parameters": {
@@ -370,6 +400,20 @@ class LLMOrchestrator:
                 self._add_reference(ReferenceType.KB, article.id, article.name)
                 result = self._format_kb_article(article)
                 return result, True
+
+            elif tool_name == "glpi_kb_create":
+                article_id = await self.glpi.create_kb_article(
+                    name=arguments["name"],
+                    content=arguments["content"],
+                    category_id=arguments.get("category_id"),
+                    is_faq=arguments.get("is_faq", False)
+                )
+
+                if article_id:
+                    self._add_reference(ReferenceType.KB, article_id, arguments["name"])
+                    return f"Knowledge Base article created successfully with ID: {article_id}. Title: {arguments['name']}", True
+                else:
+                    return "Failed to create Knowledge Base article. Please try again or contact support.", False
 
             elif tool_name == "glpi_ticket_search":
                 tickets = await self.glpi.search_tickets(

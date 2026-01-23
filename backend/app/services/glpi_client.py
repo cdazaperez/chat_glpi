@@ -420,6 +420,70 @@ class GLPIClient:
         except GLPINotFoundError:
             return None
 
+    async def create_kb_article(
+        self,
+        name: str,
+        content: str,
+        category_id: Optional[int] = None,
+        is_faq: bool = False,
+    ) -> Optional[int]:
+        """
+        Create a new Knowledge Base article in GLPI.
+
+        Args:
+            name: Article title
+            content: Article content (can include HTML)
+            category_id: Optional category ID
+            is_faq: Whether this is a FAQ article
+
+        Returns:
+            The new article ID or None if creation failed
+        """
+        logger.info("Creating GLPI KB article", data={"name": name})
+
+        payload = {
+            "input": {
+                "name": name,
+                "answer": content,
+                "is_faq": 1 if is_faq else 0,
+            }
+        }
+
+        if category_id:
+            payload["input"]["knowbaseitemcategories_id"] = category_id
+
+        try:
+            result = await self._request("POST", "KnowbaseItem", json=payload)
+
+            if result and isinstance(result, dict):
+                article_id = result.get("id")
+                if article_id:
+                    logger.info(
+                        "GLPI KB article created",
+                        data={"article_id": article_id, "name": name}
+                    )
+                    return article_id
+
+            # Some GLPI versions return the ID differently
+            if result and isinstance(result, list) and len(result) > 0:
+                article_id = result[0].get("id") if isinstance(result[0], dict) else result[0]
+                if article_id:
+                    logger.info(
+                        "GLPI KB article created",
+                        data={"article_id": article_id, "name": name}
+                    )
+                    return article_id
+
+            logger.error("Failed to create KB article: unexpected response", data={"result": str(result)})
+            return None
+
+        except GLPIError as e:
+            logger.error(f"Error creating KB article: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error creating KB article: {e}")
+            return None
+
     # Ticket Methods
 
     async def search_tickets(
