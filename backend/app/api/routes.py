@@ -209,7 +209,7 @@ async def chat(
                 processing_time_ms=processing_time,
                 sources_consulted=orchestrator.sources_consulted,
                 tokens_used=tokens_used,
-                cache_hit=False,  # TODO: Track cache hits
+                cache_hit=orchestrator.cache_hit,
             )
         )
 

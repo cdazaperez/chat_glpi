@@ -161,11 +161,13 @@ class StructuredLogger(logging.Logger):
         self._log_with_extra(logging.CRITICAL, msg, args, data=data or {}, **kwargs)
 
 
+# Set the custom logger class immediately so all loggers created via get_logger()
+# will be StructuredLogger instances, even before setup_logging() is called
+logging.setLoggerClass(StructuredLogger)
+
+
 def setup_logging(log_level: str = "info") -> None:
     """Set up structured logging."""
-    # Set the custom logger class
-    logging.setLoggerClass(StructuredLogger)
-
     # Get the root logger
     root_logger = logging.getLogger()
 
@@ -190,4 +192,11 @@ def setup_logging(log_level: str = "info") -> None:
 
 def get_logger(name: str) -> StructuredLogger:
     """Get a structured logger instance."""
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+
+    # Ensure the logger is a StructuredLogger instance
+    # This handles cases where loggers were cached before setLoggerClass was called
+    if not isinstance(logger, StructuredLogger):
+        logger.__class__ = StructuredLogger
+
+    return logger
