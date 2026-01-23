@@ -192,4 +192,11 @@ def setup_logging(log_level: str = "info") -> None:
 
 def get_logger(name: str) -> StructuredLogger:
     """Get a structured logger instance."""
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+
+    # Ensure the logger is a StructuredLogger instance
+    # This handles cases where loggers were cached before setLoggerClass was called
+    if not isinstance(logger, StructuredLogger):
+        logger.__class__ = StructuredLogger
+
+    return logger
