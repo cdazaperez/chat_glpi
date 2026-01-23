@@ -26,6 +26,7 @@ from app.models.schemas import (
     GLPIKBArticle,
     GLPITicket,
     GLPISolution,
+    GLPIFollowup,
 )
 from app.services.glpi_client import GLPIClient, GLPIError
 
@@ -137,6 +138,28 @@ TOOLS = [
                     "ticket_id": {
                         "type": "integer",
                         "description": "The ticket ID"
+                    }
+                },
+                "required": ["ticket_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_get_followups",
+            "description": "Get the followups/comments for a ticket. Use this to see the conversation history, troubleshooting steps, and additional context about how an issue was investigated and resolved.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of followups to return (default: 10)",
+                        "default": 10
                     }
                 },
                 "required": ["ticket_id"]
@@ -382,6 +405,19 @@ class LLMOrchestrator:
                 result = self._format_solution(solution)
                 return result, True
 
+            elif tool_name == "glpi_ticket_get_followups":
+                limit = arguments.get("limit", 10)
+                followups = await self.glpi.get_ticket_followups(
+                    arguments["ticket_id"],
+                    limit=limit
+                )
+
+                if not followups:
+                    return f"No followups/comments found for ticket #{arguments['ticket_id']}.", True
+
+                result = self._format_followups(arguments["ticket_id"], followups)
+                return result, True
+
             elif tool_name == "glpi_ticket_create":
                 ticket_id = await self.glpi.create_ticket(
                     title=arguments["title"],
@@ -484,6 +520,27 @@ Description:
 
         return f"""Solution for Ticket #{solution.ticket_id}:
 {content}"""
+
+    def _format_followups(self, ticket_id: int, followups: List[GLPIFollowup]) -> str:
+        """Format ticket followups for the LLM."""
+        if not followups:
+            return f"No followups found for ticket #{ticket_id}."
+
+        lines = [f"Followups/Comments for Ticket #{ticket_id} ({len(followups)} entries):"]
+        lines.append("-" * 50)
+
+        for i, followup in enumerate(followups, 1):
+            # Clean HTML from content
+            content = followup.content or "No content."
+            content = re.sub(r'<[^>]+>', '', content)
+            content = self._mask_pii(content)
+
+            date_str = followup.date_creation or "Unknown date"
+            lines.append(f"\n[{i}] Date: {date_str}")
+            lines.append(f"Content: {content}")
+            lines.append("-" * 30)
+
+        return "\n".join(lines)
 
     def _mask_pii(self, text: str) -> str:
         """Mask potential PII in text."""
