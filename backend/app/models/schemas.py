@@ -191,6 +191,19 @@ class GLPIFollowup(BaseModel):
     user_name: Optional[str] = None
 
 
+class GLPITask(BaseModel):
+    """Task entry for a ticket in GLPI."""
+    id: int
+    ticket_id: int
+    content: str
+    state: int = 1  # 0=Information, 1=To do, 2=Done
+    is_private: bool = False
+    date_creation: Optional[datetime] = None
+    begin_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    user_name: Optional[str] = None
+
+
 # Session Models
 
 class ConversationHistory(BaseModel):

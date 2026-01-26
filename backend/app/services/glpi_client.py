@@ -20,6 +20,7 @@ from app.models.schemas import (
     GLPITicket,
     GLPISolution,
     GLPIFollowup,
+    GLPITask,
 )
 
 logger = get_logger(__name__)
@@ -771,6 +772,215 @@ class GLPIClient:
         except Exception as e:
             logger.error(f"Error getting ticket followups: {e}")
             return []
+
+    async def add_ticket_followup(
+        self,
+        ticket_id: int,
+        content: str,
+        is_private: bool = False
+    ) -> Optional[int]:
+        """
+        Add a followup/comment to a ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            content: The followup content
+            is_private: Whether the followup is private
+
+        Returns:
+            The followup ID or None if creation failed
+        """
+        logger.info("Adding followup to ticket", data={"ticket_id": ticket_id})
+
+        payload = {
+            "input": {
+                "items_id": ticket_id,
+                "itemtype": "Ticket",
+                "content": content,
+                "is_private": 1 if is_private else 0,
+            }
+        }
+
+        try:
+            result = await self._request(
+                "POST",
+                "ITILFollowup",
+                json_data=payload
+            )
+
+            if result:
+                followup_id = result.get("id") if isinstance(result, dict) else (
+                    result[0].get("id") if isinstance(result, list) and result else None
+                )
+                if followup_id:
+                    logger.info("Followup added to ticket", data={"ticket_id": ticket_id, "followup_id": followup_id})
+                    return followup_id
+
+            return None
+
+        except GLPIError as e:
+            logger.error(f"Error adding followup to ticket: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error adding followup: {e}")
+            return None
+
+    async def get_ticket_tasks(
+        self,
+        ticket_id: int,
+        limit: int = 10
+    ) -> List[GLPITask]:
+        """
+        Get tasks for a ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            limit: Maximum tasks to return
+
+        Returns:
+            List of tasks
+        """
+        logger.info("Getting GLPI ticket tasks", data={"ticket_id": ticket_id})
+
+        try:
+            result = await self._request(
+                "GET",
+                f"Ticket/{ticket_id}/TicketTask",
+                params={"range": f"0-{limit - 1}"}
+            )
+
+            if not result:
+                return []
+
+            tasks = []
+            items = result if isinstance(result, list) else [result]
+
+            for item in items:
+                if item.get("is_private", False):
+                    continue  # Skip private tasks
+
+                task = GLPITask(
+                    id=item.get("id"),
+                    ticket_id=ticket_id,
+                    content=item.get("content", ""),
+                    state=item.get("state", 1),
+                    is_private=item.get("is_private", False),
+                    date_creation=item.get("date_creation"),
+                    begin_date=item.get("begin"),
+                    end_date=item.get("end"),
+                )
+                tasks.append(task)
+
+            return tasks
+
+        except GLPINotFoundError:
+            return []
+        except Exception as e:
+            logger.error(f"Error getting ticket tasks: {e}")
+            return []
+
+    async def add_ticket_task(
+        self,
+        ticket_id: int,
+        content: str,
+        state: int = 1,
+        is_private: bool = False
+    ) -> Optional[int]:
+        """
+        Add a task to a ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            content: The task content/description
+            state: Task state (0=Information, 1=To do, 2=Done)
+            is_private: Whether the task is private
+
+        Returns:
+            The task ID or None if creation failed
+        """
+        logger.info("Adding task to ticket", data={"ticket_id": ticket_id})
+
+        payload = {
+            "input": {
+                "tickets_id": ticket_id,
+                "content": content,
+                "state": state,
+                "is_private": 1 if is_private else 0,
+            }
+        }
+
+        try:
+            result = await self._request(
+                "POST",
+                "TicketTask",
+                json_data=payload
+            )
+
+            if result:
+                task_id = result.get("id") if isinstance(result, dict) else (
+                    result[0].get("id") if isinstance(result, list) and result else None
+                )
+                if task_id:
+                    logger.info("Task added to ticket", data={"ticket_id": ticket_id, "task_id": task_id})
+                    return task_id
+
+            return None
+
+        except GLPIError as e:
+            logger.error(f"Error adding task to ticket: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error adding task: {e}")
+            return None
+
+    async def add_ticket_solution(
+        self,
+        ticket_id: int,
+        content: str
+    ) -> Optional[int]:
+        """
+        Add a solution to a ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            content: The solution content
+
+        Returns:
+            The solution ID or None if creation failed
+        """
+        logger.info("Adding solution to ticket", data={"ticket_id": ticket_id})
+
+        payload = {
+            "input": {
+                "items_id": ticket_id,
+                "itemtype": "Ticket",
+                "content": content,
+            }
+        }
+
+        try:
+            result = await self._request(
+                "POST",
+                "ITILSolution",
+                json_data=payload
+            )
+
+            if result:
+                solution_id = result.get("id") if isinstance(result, dict) else (
+                    result[0].get("id") if isinstance(result, list) and result else None
+                )
+                if solution_id:
+                    logger.info("Solution added to ticket", data={"ticket_id": ticket_id, "solution_id": solution_id})
+                    return solution_id
+
+            return None
+
+        except GLPIError as e:
+            logger.error(f"Error adding solution to ticket: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error adding solution: {e}")
+            return None
 
     async def create_ticket(
         self,

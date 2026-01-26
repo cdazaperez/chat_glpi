@@ -27,6 +27,7 @@ from app.models.schemas import (
     GLPITicket,
     GLPISolution,
     GLPIFollowup,
+    GLPITask,
 )
 from app.services.glpi_client import GLPIClient, GLPIError
 
@@ -232,6 +233,107 @@ TOOLS = [
                     }
                 },
                 "required": ["title", "description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_add_followup",
+            "description": "Add a followup/comment to an existing ticket. Use this to add notes, updates, or responses to a ticket.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID to add the followup to"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The followup/comment content"
+                    },
+                    "is_private": {
+                        "type": "boolean",
+                        "description": "Whether the followup is private (only visible to technicians)",
+                        "default": False
+                    }
+                },
+                "required": ["ticket_id", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_get_tasks",
+            "description": "Get the tasks associated with a ticket. Use this to see pending work items and their status.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of tasks to return (default: 10)",
+                        "default": 10
+                    }
+                },
+                "required": ["ticket_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_add_task",
+            "description": "Add a task to an existing ticket. Use this to create work items or action items for a ticket.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID to add the task to"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The task description/content"
+                    },
+                    "state": {
+                        "type": "integer",
+                        "description": "Task state (0=Information, 1=To do, 2=Done)",
+                        "enum": [0, 1, 2],
+                        "default": 1
+                    },
+                    "is_private": {
+                        "type": "boolean",
+                        "description": "Whether the task is private",
+                        "default": False
+                    }
+                },
+                "required": ["ticket_id", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_add_solution",
+            "description": "Add a solution to a ticket. Use this to document the resolution of an issue.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID to add the solution to"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The solution content - describe how the issue was resolved"
+                    }
+                },
+                "required": ["ticket_id", "content"]
             }
         }
     }
@@ -478,6 +580,55 @@ class LLMOrchestrator:
                 else:
                     return "Failed to create ticket. Please try again or contact support directly.", False
 
+            elif tool_name == "glpi_ticket_add_followup":
+                followup_id = await self.glpi.add_ticket_followup(
+                    ticket_id=arguments["ticket_id"],
+                    content=arguments["content"],
+                    is_private=arguments.get("is_private", False)
+                )
+
+                if followup_id:
+                    return f"Followup added successfully to ticket #{arguments['ticket_id']} (Followup ID: {followup_id})", True
+                else:
+                    return f"Failed to add followup to ticket #{arguments['ticket_id']}. Please try again.", False
+
+            elif tool_name == "glpi_ticket_get_tasks":
+                limit = arguments.get("limit", 10)
+                tasks = await self.glpi.get_ticket_tasks(
+                    arguments["ticket_id"],
+                    limit=limit
+                )
+
+                if not tasks:
+                    return f"No tasks found for ticket #{arguments['ticket_id']}.", True
+
+                result = self._format_tasks(arguments["ticket_id"], tasks)
+                return result, True
+
+            elif tool_name == "glpi_ticket_add_task":
+                task_id = await self.glpi.add_ticket_task(
+                    ticket_id=arguments["ticket_id"],
+                    content=arguments["content"],
+                    state=arguments.get("state", 1),
+                    is_private=arguments.get("is_private", False)
+                )
+
+                if task_id:
+                    return f"Task added successfully to ticket #{arguments['ticket_id']} (Task ID: {task_id})", True
+                else:
+                    return f"Failed to add task to ticket #{arguments['ticket_id']}. Please try again.", False
+
+            elif tool_name == "glpi_ticket_add_solution":
+                solution_id = await self.glpi.add_ticket_solution(
+                    ticket_id=arguments["ticket_id"],
+                    content=arguments["content"]
+                )
+
+                if solution_id:
+                    return f"Solution added successfully to ticket #{arguments['ticket_id']} (Solution ID: {solution_id})", True
+                else:
+                    return f"Failed to add solution to ticket #{arguments['ticket_id']}. Please try again.", False
+
             else:
                 return f"Unknown tool: {tool_name}", False
 
@@ -581,6 +732,31 @@ Description:
 
             date_str = followup.date_creation or "Unknown date"
             lines.append(f"\n[{i}] Date: {date_str}")
+            lines.append(f"Content: {content}")
+            lines.append("-" * 30)
+
+        return "\n".join(lines)
+
+    def _format_tasks(self, ticket_id: int, tasks: List[GLPITask]) -> str:
+        """Format ticket tasks for the LLM."""
+        if not tasks:
+            return f"No tasks found for ticket #{ticket_id}."
+
+        state_names = {0: "Information", 1: "To Do", 2: "Done"}
+        lines = [f"Tasks for Ticket #{ticket_id} ({len(tasks)} tasks):"]
+        lines.append("-" * 50)
+
+        for i, task in enumerate(tasks, 1):
+            # Clean HTML from content
+            content = task.content or "No content."
+            content = re.sub(r'<[^>]+>', '', content)
+            content = self._mask_pii(content)
+
+            state_str = state_names.get(task.state, "Unknown")
+            date_str = task.date_creation or "Unknown date"
+            lines.append(f"\n[{i}] Task ID: {task.id}")
+            lines.append(f"State: {state_str}")
+            lines.append(f"Date: {date_str}")
             lines.append(f"Content: {content}")
             lines.append("-" * 30)
 
