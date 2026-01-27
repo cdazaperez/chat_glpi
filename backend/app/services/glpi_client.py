@@ -777,7 +777,8 @@ class GLPIClient:
         self,
         ticket_id: int,
         content: str,
-        is_private: bool = False
+        is_private: bool = False,
+        users_id: Optional[int] = None
     ) -> Optional[int]:
         """
         Add a followup/comment to a ticket.
@@ -786,11 +787,12 @@ class GLPIClient:
             ticket_id: The ticket ID
             content: The followup content
             is_private: Whether the followup is private
+            users_id: Optional user ID to attribute the followup to
 
         Returns:
             The followup ID or None if creation failed
         """
-        logger.info("Adding followup to ticket", data={"ticket_id": ticket_id})
+        logger.info("Adding followup to ticket", data={"ticket_id": ticket_id, "users_id": users_id})
 
         payload = {
             "input": {
@@ -800,6 +802,10 @@ class GLPIClient:
                 "is_private": 1 if is_private else 0,
             }
         }
+
+        # Add user attribution if provided
+        if users_id:
+            payload["input"]["users_id"] = users_id
 
         try:
             result = await self._request(
@@ -884,7 +890,8 @@ class GLPIClient:
         ticket_id: int,
         content: str,
         state: int = 1,
-        is_private: bool = False
+        is_private: bool = False,
+        users_id: Optional[int] = None
     ) -> Optional[int]:
         """
         Add a task to a ticket.
@@ -894,11 +901,12 @@ class GLPIClient:
             content: The task content/description
             state: Task state (0=Information, 1=To do, 2=Done)
             is_private: Whether the task is private
+            users_id: Optional user ID to attribute the task to
 
         Returns:
             The task ID or None if creation failed
         """
-        logger.info("Adding task to ticket", data={"ticket_id": ticket_id})
+        logger.info("Adding task to ticket", data={"ticket_id": ticket_id, "users_id": users_id})
 
         payload = {
             "input": {
@@ -908,6 +916,10 @@ class GLPIClient:
                 "is_private": 1 if is_private else 0,
             }
         }
+
+        # Add user attribution if provided
+        if users_id:
+            payload["input"]["users_id"] = users_id
 
         try:
             result = await self._request(
@@ -936,7 +948,8 @@ class GLPIClient:
     async def add_ticket_solution(
         self,
         ticket_id: int,
-        content: str
+        content: str,
+        users_id: Optional[int] = None
     ) -> Optional[int]:
         """
         Add a solution to a ticket.
@@ -944,11 +957,12 @@ class GLPIClient:
         Args:
             ticket_id: The ticket ID
             content: The solution content
+            users_id: Optional user ID to attribute the solution to
 
         Returns:
             The solution ID or None if creation failed
         """
-        logger.info("Adding solution to ticket", data={"ticket_id": ticket_id})
+        logger.info("Adding solution to ticket", data={"ticket_id": ticket_id, "users_id": users_id})
 
         payload = {
             "input": {
@@ -957,6 +971,10 @@ class GLPIClient:
                 "content": content,
             }
         }
+
+        # Add user attribution if provided
+        if users_id:
+            payload["input"]["users_id"] = users_id
 
         try:
             result = await self._request(
@@ -1035,6 +1053,75 @@ class GLPIClient:
         except Exception as e:
             logger.error(f"Error creating ticket: {e}")
             raise GLPIError(f"Failed to create ticket: {e}")
+
+    # User Methods
+
+    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a GLPI user by email address.
+
+        Args:
+            email: The user's email address
+
+        Returns:
+            User data dict with id, name, etc. or None if not found
+        """
+        if not email:
+            return None
+
+        cache_key = f"glpi:user_email:{email.lower()}"
+        cached = await self._get_cached(cache_key)
+        if cached:
+            return cached
+
+        logger.info("Looking up GLPI user by email", data={"email": email})
+
+        try:
+            # Search for user by email
+            params = {
+                "criteria[0][field]": 5,  # Email field
+                "criteria[0][searchtype]": "equals",
+                "criteria[0][value]": email,
+                "forcedisplay[0]": 2,  # ID
+                "forcedisplay[1]": 34,  # Name (realname)
+                "forcedisplay[2]": 5,  # Email
+                "range": "0-0",
+            }
+
+            result = await self._request("GET", "search/User", params=params)
+
+            if result and "data" in result and len(result["data"]) > 0:
+                user_data = result["data"][0]
+                user = {
+                    "id": user_data.get("2") or user_data.get("id"),
+                    "name": user_data.get("34", ""),
+                    "email": user_data.get("5", email),
+                }
+
+                # Cache for 1 hour
+                await self._set_cached(cache_key, user, 3600)
+                logger.info("GLPI user found", data={"user_id": user["id"], "email": email})
+                return user
+
+            logger.info("GLPI user not found", data={"email": email})
+            return None
+
+        except Exception as e:
+            logger.error(f"Error looking up user by email: {e}")
+            return None
+
+    async def get_user_id_by_email(self, email: str) -> Optional[int]:
+        """
+        Get a GLPI user ID by email address.
+
+        Args:
+            email: The user's email address
+
+        Returns:
+            User ID or None if not found
+        """
+        user = await self.get_user_by_email(email)
+        return user["id"] if user else None
 
     # Utility Methods
 

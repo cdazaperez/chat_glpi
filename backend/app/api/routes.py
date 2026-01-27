@@ -179,10 +179,12 @@ async def chat(
         )
 
         # Create orchestrator and process message
+        # Pass user context for GLPI user attribution
         orchestrator = LLMOrchestrator(glpi)
         response_text, references, suggested_actions, tokens_used = await orchestrator.process_message(
             request.message,
-            history
+            history,
+            user_context=request.context
         )
 
         # Add assistant response to history

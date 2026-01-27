@@ -23,6 +23,7 @@ from app.models.schemas import (
     ActionType,
     ChatMessage,
     MessageRole,
+    ChatContext,
     GLPIKBArticle,
     GLPITicket,
     GLPISolution,
@@ -430,6 +431,8 @@ class LLMOrchestrator:
         self._sources_consulted: List[str] = []
         self._tokens_used: int = 0
         self._cache_hit: bool = False
+        self._user_context: Optional[ChatContext] = None
+        self._glpi_user_id: Optional[int] = None
 
     def _check_guardrails(self, message: str):
         """Check message against guardrails."""
@@ -443,6 +446,32 @@ class LLMOrchestrator:
                     "I'm sorry, but I cannot help with that request. "
                     "If you have a legitimate IT support question, please rephrase it."
                 )
+
+    async def _resolve_glpi_user_id(self) -> Optional[int]:
+        """
+        Resolve the GLPI user ID from user context.
+
+        Returns:
+            GLPI user ID or None if not found
+        """
+        if self._glpi_user_id is not None:
+            return self._glpi_user_id
+
+        if not self._user_context or not self._user_context.user_email:
+            return None
+
+        try:
+            user_id = await self.glpi.get_user_id_by_email(self._user_context.user_email)
+            if user_id:
+                self._glpi_user_id = user_id
+                logger.info(
+                    "Resolved GLPI user ID",
+                    data={"email": self._user_context.user_email, "user_id": user_id}
+                )
+            return user_id
+        except Exception as e:
+            logger.warning(f"Failed to resolve GLPI user ID: {e}")
+            return None
 
     def _build_messages(
         self,
@@ -581,14 +610,18 @@ class LLMOrchestrator:
                     return "Failed to create ticket. Please try again or contact support directly.", False
 
             elif tool_name == "glpi_ticket_add_followup":
+                # Resolve user ID for attribution
+                users_id = await self._resolve_glpi_user_id()
                 followup_id = await self.glpi.add_ticket_followup(
                     ticket_id=arguments["ticket_id"],
                     content=arguments["content"],
-                    is_private=arguments.get("is_private", False)
+                    is_private=arguments.get("is_private", False),
+                    users_id=users_id
                 )
 
                 if followup_id:
-                    return f"Followup added successfully to ticket #{arguments['ticket_id']} (Followup ID: {followup_id})", True
+                    user_info = f" (by user #{users_id})" if users_id else ""
+                    return f"Followup added successfully to ticket #{arguments['ticket_id']}{user_info} (Followup ID: {followup_id})", True
                 else:
                     return f"Failed to add followup to ticket #{arguments['ticket_id']}. Please try again.", False
 
@@ -606,26 +639,34 @@ class LLMOrchestrator:
                 return result, True
 
             elif tool_name == "glpi_ticket_add_task":
+                # Resolve user ID for attribution
+                users_id = await self._resolve_glpi_user_id()
                 task_id = await self.glpi.add_ticket_task(
                     ticket_id=arguments["ticket_id"],
                     content=arguments["content"],
                     state=arguments.get("state", 1),
-                    is_private=arguments.get("is_private", False)
+                    is_private=arguments.get("is_private", False),
+                    users_id=users_id
                 )
 
                 if task_id:
-                    return f"Task added successfully to ticket #{arguments['ticket_id']} (Task ID: {task_id})", True
+                    user_info = f" (by user #{users_id})" if users_id else ""
+                    return f"Task added successfully to ticket #{arguments['ticket_id']}{user_info} (Task ID: {task_id})", True
                 else:
                     return f"Failed to add task to ticket #{arguments['ticket_id']}. Please try again.", False
 
             elif tool_name == "glpi_ticket_add_solution":
+                # Resolve user ID for attribution
+                users_id = await self._resolve_glpi_user_id()
                 solution_id = await self.glpi.add_ticket_solution(
                     ticket_id=arguments["ticket_id"],
-                    content=arguments["content"]
+                    content=arguments["content"],
+                    users_id=users_id
                 )
 
                 if solution_id:
-                    return f"Solution added successfully to ticket #{arguments['ticket_id']} (Solution ID: {solution_id})", True
+                    user_info = f" (by user #{users_id})" if users_id else ""
+                    return f"Solution added successfully to ticket #{arguments['ticket_id']}{user_info} (Solution ID: {solution_id})", True
                 else:
                     return f"Failed to add solution to ticket #{arguments['ticket_id']}. Please try again.", False
 
@@ -804,6 +845,7 @@ Description:
         self,
         message: str,
         history: Optional[List[ChatMessage]] = None,
+        user_context: Optional[ChatContext] = None,
     ) -> Tuple[str, List[Reference], List[SuggestedAction], int]:
         """
         Process a user message and generate a response.
@@ -811,6 +853,7 @@ Description:
         Args:
             message: The user's message
             history: Optional conversation history
+            user_context: Optional user context with email for GLPI user attribution
 
         Returns:
             Tuple of (response_text, references, suggested_actions, tokens_used)
@@ -820,6 +863,8 @@ Description:
         self._sources_consulted = []
         self._tokens_used = 0
         self._cache_hit = False
+        self._user_context = user_context
+        self._glpi_user_id = None  # Reset for each message
 
         # Reset GLPI client cache hit counter
         self.glpi.reset_cache_hits()
