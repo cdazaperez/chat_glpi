@@ -266,6 +266,31 @@ class GLPIClient:
             if response.status_code == 429:
                 raise GLPIRateLimitError("GLPI rate limit exceeded")
 
+            # Handle 400 Bad Request with detailed error message
+            if response.status_code == 400:
+                error_detail = "Bad request"
+                try:
+                    error_body = response.json()
+                    if isinstance(error_body, list) and len(error_body) > 0:
+                        error_detail = str(error_body[0])
+                    elif isinstance(error_body, dict):
+                        error_detail = error_body.get("message", str(error_body))
+                    else:
+                        error_detail = str(error_body)
+                except Exception:
+                    error_detail = response.text[:500] if response.text else "Unknown error"
+
+                logger.error(
+                    f"GLPI bad request",
+                    data={
+                        "endpoint": endpoint,
+                        "method": method,
+                        "error_detail": error_detail,
+                        "payload": json_data,
+                    }
+                )
+                raise GLPIError(f"GLPI bad request: {error_detail}")
+
             response.raise_for_status()
 
             if response.content:
@@ -966,7 +991,8 @@ class GLPIClient:
         self,
         ticket_id: int,
         content: str,
-        users_id: Optional[int] = None
+        users_id: Optional[int] = None,
+        solutiontypes_id: Optional[int] = None
     ) -> Optional[int]:
         """
         Add a solution to a ticket.
@@ -974,7 +1000,8 @@ class GLPIClient:
         Args:
             ticket_id: The ticket ID
             content: The solution content
-            users_id: Optional user ID to attribute the solution to
+            users_id: Optional user ID to attribute the solution to (may not be supported by all GLPI versions)
+            solutiontypes_id: Optional solution type ID
 
         Returns:
             The solution ID or None if creation failed
@@ -989,7 +1016,11 @@ class GLPIClient:
             }
         }
 
-        # Add user attribution if provided
+        # Add solution type if provided
+        if solutiontypes_id:
+            payload["input"]["solutiontypes_id"] = solutiontypes_id
+
+        # Add user attribution if provided (note: may not be supported in all GLPI versions)
         if users_id:
             payload["input"]["users_id"] = users_id
 
