@@ -11,6 +11,7 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
+    RetryError,
 )
 
 from app.core.config import get_settings
@@ -122,9 +123,14 @@ class GLPIClient:
         await self._init_session()
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=15),
+        retry=retry_if_exception_type((
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.ConnectError,
+            httpx.TransportError,
+        )),
     )
     async def _init_session(self):
         """Initialize a new GLPI session."""
@@ -212,9 +218,14 @@ class GLPIClient:
             logger.warning(f"Cache set error: {e}")
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError)),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=15),
+        retry=retry_if_exception_type((
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.ConnectError,
+            httpx.TransportError,
+        )),
     )
     async def _request(
         self,
@@ -827,9 +838,12 @@ class GLPIClient:
         except GLPIError as e:
             logger.error(f"Error adding followup to ticket: {e}")
             raise
+        except RetryError as e:
+            logger.error(f"Connection to GLPI failed after retries: {e}")
+            raise GLPIError(f"Unable to connect to GLPI server after multiple attempts")
         except Exception as e:
             logger.error(f"Unexpected error adding followup: {e}")
-            return None
+            raise GLPIError(f"Unexpected error adding followup: {e}")
 
     async def get_ticket_tasks(
         self,
@@ -941,9 +955,12 @@ class GLPIClient:
         except GLPIError as e:
             logger.error(f"Error adding task to ticket: {e}")
             raise
+        except RetryError as e:
+            logger.error(f"Connection to GLPI failed after retries: {e}")
+            raise GLPIError(f"Unable to connect to GLPI server after multiple attempts")
         except Exception as e:
             logger.error(f"Unexpected error adding task: {e}")
-            return None
+            raise GLPIError(f"Unexpected error adding task: {e}")
 
     async def add_ticket_solution(
         self,
@@ -996,9 +1013,12 @@ class GLPIClient:
         except GLPIError as e:
             logger.error(f"Error adding solution to ticket: {e}")
             raise
+        except RetryError as e:
+            logger.error(f"Connection to GLPI failed after retries: {e}")
+            raise GLPIError(f"Unable to connect to GLPI server after multiple attempts")
         except Exception as e:
             logger.error(f"Unexpected error adding solution: {e}")
-            return None
+            raise GLPIError(f"Unexpected error adding solution: {e}")
 
     async def create_ticket(
         self,
