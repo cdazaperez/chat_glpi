@@ -337,54 +337,166 @@ TOOLS = [
                 "required": ["ticket_id", "content"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_get_current_user",
+            "description": "Get information about the current authenticated user including their role and permissions. Use this at the start of conversations or when you need to verify user permissions.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_list_my_tickets",
+            "description": "List tickets assigned to the current technician. Use this when the user asks for 'my tickets' or 'my cases'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["new", "assigned", "pending", "solved", "closed", "all"],
+                        "description": "Filter by ticket status (default: all open tickets)"
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, 5],
+                        "description": "Filter by priority (1=Very Low to 5=Very High)"
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Search query to filter tickets by name"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of tickets to return (default: 20)",
+                        "default": 20
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_update",
+            "description": "Update ticket fields like status, priority, urgency, impact. IMPORTANT: For sensitive actions (closing tickets, changing to high priority, reassigning), require explicit confirmation with 'CONFIRMO'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID to update"
+                    },
+                    "status": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, 5, 6],
+                        "description": "New status: 1=New, 2=Assigned, 3=Planned, 4=Pending, 5=Solved, 6=Closed"
+                    },
+                    "priority": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, 5],
+                        "description": "New priority: 1=Very Low to 5=Very High"
+                    },
+                    "urgency": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, 5],
+                        "description": "New urgency: 1=Very Low to 5=Very High"
+                    },
+                    "impact": {
+                        "type": "integer",
+                        "enum": [1, 2, 3, 4, 5],
+                        "description": "New impact: 1=Very Low to 5=Very High"
+                    },
+                    "category_id": {
+                        "type": "integer",
+                        "description": "New category ID"
+                    }
+                },
+                "required": ["ticket_id"]
+            }
+        }
     }
 ]
 
 
 # System prompt for the assistant
-SYSTEM_PROMPT = """You are a helpful IT support assistant for SkillNet's helpdesk. Your role is to help users solve technical issues by searching the GLPI knowledge base and resolved tickets.
+SYSTEM_PROMPT = """Eres un asistente de IA para mesa de ayuda integrado con GLPI. Tu prioridad es la seguridad, el control de acceso (RBAC) y operar solo con datos reales de GLPI.
 
-## Guidelines:
+## OBJETIVO
+Ayudar a usuarios autenticados en GLPI a:
+- Consultar y gestionar tickets según su rol
+- Buscar soluciones en la Base de Conocimiento (KB) y tickets resueltos
+- Documentar seguimientos, tareas y soluciones
 
-1. **Search Strategy**:
-   - First search the Knowledge Base (KB) for documented solutions
-   - If KB doesn't have sufficient information, search resolved tickets for similar issues
-   - Always cite your sources with KB_ID or TICKET_ID
+## REGLAS DE SEGURIDAD (INVIOLABLES)
 
-2. **Response Format**:
-   - Start with a brief acknowledgment of the user's issue
-   - Present the most relevant solution found in GLPI
-   - Provide step-by-step instructions when applicable
-   - Include references to sources (e.g., "Based on KB #123" or "Similar issue resolved in Ticket #456")
+1. **Control de Acceso (RBAC)**:
+   - TÉCNICO: Solo puede ver/modificar tickets ASIGNADOS a él
+   - ADMIN/HELPDESK: Acceso total a tickets y recursos
+   - Si no tienes permisos, informa al usuario y sugiere contactar al helpdesk
 
-3. **When No Solution Found**:
-   - Clearly state that no matching solution was found in GLPI
-   - Ask clarifying questions to better understand the issue
-   - Suggest creating a support ticket if the issue requires human intervention
+2. **Datos Reales**:
+   - NUNCA inventes datos - usa siempre las herramientas (tools)
+   - Si no hay datos en GLPI, dilo claramente
+   - No asumas estado, prioridad o asignación sin verificar
 
-4. **Safety Rules**:
-   - NEVER invent or fabricate KB articles or tickets
-   - NEVER share personal information (names, emails, phone numbers) from tickets
-   - NEVER execute commands or make changes without explicit user consent
-   - If asked for passwords, credentials, or sensitive data, politely refuse
+3. **Privacidad**:
+   - Evita mostrar correos/teléfonos completos si no es necesario
+   - No reveles información de tickets que el usuario no puede ver
 
-5. **Ticket Management**:
-   - You CAN add followups/comments, tasks, and solutions to existing tickets
-   - When the technician's email is provided in the context, changes are attributed to them in GLPI
-   - Always confirm with the user before making changes to tickets
-   - Use these capabilities to help technicians document their work
+4. **Acciones Sensibles - Requieren "CONFIRMO"**:
+   - Cerrar ticket o marcar como solucionado (status 5 o 6)
+   - Cambiar a prioridad alta/crítica (4 o 5)
+   - Reasignar ticket a otro técnico
+   - Si el usuario NO dice "CONFIRMO", NO ejecutes la acción
 
-6. **Ticket Creation**:
-   - Only offer to create a ticket if no solution is found
-   - Require explicit user confirmation before creating any ticket
-   - Summarize what will be included in the ticket before creation
+## FLUJO DE TRABAJO
 
-7. **Language**:
-   - Respond in the same language the user uses
-   - Use clear, non-technical language when possible
-   - For technical users, provide detailed technical information
+1. **Al inicio o cuando necesites verificar permisos**:
+   - Usa glpi_get_current_user para obtener rol y permisos
 
-Remember: Your responses must be grounded in actual GLPI data. If you're unsure, say so."""
+2. **Cuando pidan "mis tickets" o "mis casos"**:
+   - Usa glpi_list_my_tickets para listar tickets asignados
+   - Filtra por estado si lo especifican
+
+3. **Para ver/actualizar un ticket específico**:
+   - Primero obtén el ticket con glpi_ticket_get
+   - Verifica que el usuario tiene acceso
+   - Para acciones sensibles, pide "CONFIRMO"
+
+4. **Para buscar soluciones**:
+   - Busca en KB con glpi_kb_search
+   - Busca tickets resueltos similares con glpi_ticket_search
+   - Presenta pasos concretos basados en resultados reales
+
+## FORMATO DE RESPUESTA
+
+1. **Resumen breve** de lo que harás/encontraste
+2. **Resultados** en bullets (tickets, KB, hallazgos)
+3. **Recomendación accionable** (pasos concretos)
+4. **Texto sugerido** para follow-up (listo para pegar en GLPI)
+5. **Siguientes pasos** y, si aplica, solicitud de "CONFIRMO"
+
+## GESTIÓN DE TICKETS
+
+- Puedes agregar followups, tareas y soluciones
+- Los cambios se atribuyen al técnico cuando su email está en el contexto
+- Siempre confirma antes de modificar tickets
+- Para cerrar/solucionar tickets, REQUIERE "CONFIRMO" explícito
+
+## IDIOMA
+
+- Responde en el mismo idioma que use el usuario
+- Usa lenguaje claro y técnico según el contexto
+
+Recuerda: Todas tus respuestas deben estar basadas en datos reales de GLPI. Si no estás seguro, dilo."""
 
 
 class GuardrailViolation(Exception):
@@ -439,6 +551,8 @@ class LLMOrchestrator:
         self._cache_hit: bool = False
         self._user_context: Optional[ChatContext] = None
         self._glpi_user_id: Optional[int] = None
+        self._user_profile: Optional[Dict[str, Any]] = None
+        self._pending_confirmation: Optional[Dict[str, Any]] = None
 
     def _check_guardrails(self, message: str):
         """Check message against guardrails."""
@@ -676,6 +790,103 @@ class LLMOrchestrator:
                 else:
                     return f"Failed to add solution to ticket #{arguments['ticket_id']}. Please try again.", False
 
+            elif tool_name == "glpi_get_current_user":
+                # Get current user profile from context
+                if not self._user_context or not self._user_context.user_email:
+                    return "No user context available. Please ensure user email is provided in the request.", False
+
+                user = await self.glpi.get_user_by_email(self._user_context.user_email)
+                if not user:
+                    return f"User with email {self._user_context.user_email} not found in GLPI.", False
+
+                # Get full profile with permissions
+                profile = await self.glpi.get_user_profile(user["id"])
+                if not profile:
+                    return f"Could not retrieve profile for user {user['name']}.", False
+
+                self._glpi_user_id = profile["id"]
+                self._user_profile = profile
+
+                result = f"""Usuario actual:
+- ID: {profile['id']}
+- Nombre: {profile['name']} {profile.get('firstname', '')}
+- Email: {profile['email']}
+- Rol: {profile['role'].upper()}
+- Permisos:
+  - Ver todos los tickets: {'Sí' if profile['permissions']['can_view_all_tickets'] else 'No (solo asignados)'}
+  - Actualizar cualquier ticket: {'Sí' if profile['permissions']['can_update_any_ticket'] else 'No (solo asignados)'}
+  - Asignar tickets: {'Sí' if profile['permissions']['can_assign_tickets'] else 'No'}"""
+                return result, True
+
+            elif tool_name == "glpi_list_my_tickets":
+                # Get user ID
+                users_id = await self._resolve_glpi_user_id()
+                if not users_id:
+                    return "No se pudo identificar al usuario. Asegúrate de que el email esté configurado en el contexto.", False
+
+                tickets = await self.glpi.get_tickets_assigned_to_user(
+                    user_id=users_id,
+                    status=arguments.get("status"),
+                    priority=arguments.get("priority"),
+                    search=arguments.get("search"),
+                    limit=arguments.get("limit", 20)
+                )
+
+                if not tickets:
+                    status_filter = arguments.get("status", "todos los estados")
+                    return f"No se encontraron tickets asignados a ti con el filtro: {status_filter}.", True
+
+                result = self._format_my_tickets(tickets)
+                return result, True
+
+            elif tool_name == "glpi_ticket_update":
+                ticket_id = arguments["ticket_id"]
+                users_id = await self._resolve_glpi_user_id()
+
+                # Check if user has access to this ticket
+                if self._user_profile and not self._user_profile.get("is_admin", False):
+                    has_access = await self.glpi.check_ticket_access(
+                        ticket_id, users_id, is_admin=False
+                    )
+                    if not has_access:
+                        return f"No tienes permisos para modificar el ticket #{ticket_id}. Solo puedes modificar tickets asignados a ti.", False
+
+                # Check for sensitive actions that require confirmation
+                sensitive_action = False
+                action_description = []
+
+                new_status = arguments.get("status")
+                new_priority = arguments.get("priority")
+
+                if new_status in [5, 6]:  # Solved or Closed
+                    sensitive_action = True
+                    status_name = "Solucionado" if new_status == 5 else "Cerrado"
+                    action_description.append(f"cambiar estado a {status_name}")
+
+                if new_priority and new_priority >= 4:  # High or Critical
+                    sensitive_action = True
+                    priority_name = "Alta" if new_priority == 4 else "Muy Alta"
+                    action_description.append(f"cambiar prioridad a {priority_name}")
+
+                if sensitive_action:
+                    return f"ACCIÓN SENSIBLE: Esta operación requiere confirmación.\nAcciones: {', '.join(action_description)}\n\nPor favor escribe 'CONFIRMO' para proceder con la actualización del ticket #{ticket_id}.", True
+
+                # Proceed with update
+                success = await self.glpi.update_ticket(
+                    ticket_id=ticket_id,
+                    status=new_status,
+                    priority=new_priority,
+                    urgency=arguments.get("urgency"),
+                    impact=arguments.get("impact"),
+                    category_id=arguments.get("category_id"),
+                    users_id=users_id
+                )
+
+                if success:
+                    return f"Ticket #{ticket_id} actualizado correctamente.", True
+                else:
+                    return f"No se pudo actualizar el ticket #{ticket_id}.", False
+
             else:
                 return f"Unknown tool: {tool_name}", False
 
@@ -740,6 +951,32 @@ Content:
                 content = self._mask_pii(content)
                 results.append(f"  Description: {content}")
         return "\n".join(results)
+
+    def _format_my_tickets(self, tickets: List[GLPITicket]) -> str:
+        """Format user's assigned tickets for display."""
+        priority_names = {1: "Muy Baja", 2: "Baja", 3: "Media", 4: "Alta", 5: "Muy Alta"}
+        status_names = {1: "Nuevo", 2: "Asignado", 3: "Planificado", 4: "Pendiente", 5: "Solucionado", 6: "Cerrado"}
+
+        lines = [f"📋 Tus tickets asignados ({len(tickets)} encontrados):"]
+        lines.append("-" * 50)
+
+        for ticket in tickets:
+            self._add_reference(ReferenceType.TICKET, ticket.id, ticket.name)
+            status = status_names.get(ticket.status, "Desconocido")
+            priority = priority_names.get(ticket.priority, "Media")
+
+            lines.append(f"\n🎫 **Ticket #{ticket.id}**: {ticket.name}")
+            lines.append(f"   Estado: {status} | Prioridad: {priority}")
+
+            if ticket.content:
+                content = ticket.content[:150] + "..." if len(ticket.content) > 150 else ticket.content
+                content = re.sub(r'<[^>]+>', '', content)
+                content = self._mask_pii(content)
+                lines.append(f"   Descripción: {content}")
+
+        lines.append("-" * 50)
+        lines.append("💡 Para ver detalles de un ticket, usa su número (ej: 'ver ticket #123')")
+        return "\n".join(lines)
 
     def _format_ticket(self, ticket: GLPITicket) -> str:
         """Format a single ticket for the LLM."""

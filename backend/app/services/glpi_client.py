@@ -1174,6 +1174,284 @@ class GLPIClient:
         user = await self.get_user_by_email(email)
         return user["id"] if user else None
 
+    async def get_user_profile(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed user profile including role/permissions.
+
+        Args:
+            user_id: The GLPI user ID
+
+        Returns:
+            User profile dict with id, name, email, role, permissions
+        """
+        cache_key = f"glpi:user_profile:{user_id}"
+        cached = await self._get_cached(cache_key)
+        if cached:
+            return cached
+
+        logger.info("Getting GLPI user profile", data={"user_id": user_id})
+
+        try:
+            # Get user details
+            user_data = await self._request("GET", f"User/{user_id}")
+
+            if not user_data:
+                return None
+
+            # Get user's profiles (roles)
+            profiles = await self._request("GET", f"User/{user_id}/Profile_User")
+
+            # Determine role based on profiles
+            role = "technician"  # Default role
+            is_admin = False
+
+            if profiles and isinstance(profiles, list):
+                for profile in profiles:
+                    profile_id = profile.get("profiles_id", 0)
+                    # Common GLPI profile IDs: 1=self-service, 2=observer, 3=admin, 4=super-admin, 6=technician
+                    if profile_id in [3, 4]:  # Admin or Super-Admin
+                        role = "admin"
+                        is_admin = True
+                        break
+                    elif profile_id == 6:  # Technician
+                        role = "technician"
+
+            profile = {
+                "id": user_data.get("id"),
+                "name": user_data.get("realname", "") or user_data.get("name", ""),
+                "firstname": user_data.get("firstname", ""),
+                "email": user_data.get("email", ""),
+                "role": role,
+                "is_admin": is_admin,
+                "permissions": {
+                    "can_view_all_tickets": is_admin,
+                    "can_update_any_ticket": is_admin,
+                    "can_assign_tickets": is_admin,
+                }
+            }
+
+            # Cache for 30 minutes
+            await self._set_cached(cache_key, profile, 1800)
+            logger.info("GLPI user profile retrieved", data={"user_id": user_id, "role": role})
+            return profile
+
+        except GLPINotFoundError:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user profile: {e}")
+            return None
+
+    async def get_tickets_assigned_to_user(
+        self,
+        user_id: int,
+        status: Optional[str] = None,
+        priority: Optional[int] = None,
+        search: Optional[str] = None,
+        limit: int = 20
+    ) -> List[GLPITicket]:
+        """
+        Get tickets assigned to a specific user.
+
+        Args:
+            user_id: The GLPI user ID
+            status: Filter by status ('new', 'assigned', 'pending', 'solved', 'closed', 'all')
+            priority: Filter by priority (1-5)
+            search: Optional search query
+            limit: Maximum results
+
+        Returns:
+            List of tickets assigned to the user
+        """
+        logger.info("Getting tickets assigned to user", data={"user_id": user_id, "status": status})
+
+        # Build search parameters
+        params = {
+            "forcedisplay[0]": 1,   # ID
+            "forcedisplay[1]": 2,   # Name
+            "forcedisplay[2]": 21,  # Content
+            "forcedisplay[3]": 12,  # Status
+            "forcedisplay[4]": 10,  # Urgency
+            "forcedisplay[5]": 11,  # Impact
+            "forcedisplay[6]": 7,   # Category
+            "forcedisplay[7]": 3,   # Priority
+            "range": f"0-{limit - 1}",
+            "sort": 19,  # Sort by modification date
+            "order": "DESC",
+        }
+
+        criteria_idx = 0
+
+        # Filter by assigned technician (field 5 = technician in charge)
+        params[f"criteria[{criteria_idx}][field]"] = 5
+        params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+        params[f"criteria[{criteria_idx}][value]"] = user_id
+        criteria_idx += 1
+
+        # Add status filter
+        if status and status != "all":
+            status_map = {
+                "new": self.STATUS_NEW,
+                "assigned": self.STATUS_ASSIGNED,
+                "planned": self.STATUS_PLANNED,
+                "pending": self.STATUS_PENDING,
+                "solved": self.STATUS_SOLVED,
+                "closed": self.STATUS_CLOSED,
+            }
+            if status in status_map:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+                params[f"criteria[{criteria_idx}][field]"] = 12
+                params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                params[f"criteria[{criteria_idx}][value]"] = status_map[status]
+                criteria_idx += 1
+
+        # Add priority filter
+        if priority:
+            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 3
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = priority
+            criteria_idx += 1
+
+        # Add search filter
+        if search and search.strip():
+            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 1  # Name
+            params[f"criteria[{criteria_idx}][searchtype]"] = "contains"
+            params[f"criteria[{criteria_idx}][value]"] = search.strip()
+            criteria_idx += 1
+
+        try:
+            result = await self._request("GET", "search/Ticket", params=params)
+            return self._parse_ticket_search_results(result)
+        except GLPINotFoundError:
+            return []
+        except Exception as e:
+            logger.error(f"Error getting assigned tickets: {e}")
+            return []
+
+    async def update_ticket(
+        self,
+        ticket_id: int,
+        status: Optional[int] = None,
+        priority: Optional[int] = None,
+        urgency: Optional[int] = None,
+        impact: Optional[int] = None,
+        category_id: Optional[int] = None,
+        assigned_to: Optional[int] = None,
+        users_id: Optional[int] = None
+    ) -> bool:
+        """
+        Update ticket fields.
+
+        Args:
+            ticket_id: The ticket ID
+            status: New status (1-6)
+            priority: New priority (1-5)
+            urgency: New urgency (1-5)
+            impact: New impact (1-5)
+            category_id: New category ID
+            assigned_to: New technician user ID
+            users_id: User making the change (for attribution)
+
+        Returns:
+            True if update successful, False otherwise
+        """
+        logger.info("Updating ticket", data={"ticket_id": ticket_id, "users_id": users_id})
+
+        # Build update payload
+        update_fields = {}
+
+        if status is not None:
+            update_fields["status"] = status
+        if priority is not None:
+            update_fields["priority"] = priority
+        if urgency is not None:
+            update_fields["urgency"] = urgency
+        if impact is not None:
+            update_fields["impact"] = impact
+        if category_id is not None:
+            update_fields["itilcategories_id"] = category_id
+
+        if not update_fields:
+            logger.warning("No fields to update")
+            return False
+
+        payload = {"input": update_fields}
+
+        try:
+            await self._request("PUT", f"Ticket/{ticket_id}", json_data=payload)
+
+            # Handle technician assignment separately
+            if assigned_to is not None:
+                await self._assign_ticket_to_user(ticket_id, assigned_to)
+
+            logger.info("Ticket updated successfully", data={"ticket_id": ticket_id})
+            return True
+
+        except GLPIError as e:
+            logger.error(f"Error updating ticket: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error updating ticket: {e}")
+            raise GLPIError(f"Failed to update ticket: {e}")
+
+    async def _assign_ticket_to_user(self, ticket_id: int, user_id: int) -> bool:
+        """
+        Assign a ticket to a technician.
+
+        Args:
+            ticket_id: The ticket ID
+            user_id: The technician's user ID
+
+        Returns:
+            True if assignment successful
+        """
+        payload = {
+            "input": {
+                "tickets_id": ticket_id,
+                "users_id": user_id,
+                "type": 2,  # 2 = assigned to (technician)
+            }
+        }
+
+        try:
+            await self._request("POST", "Ticket_User", json_data=payload)
+            logger.info("Ticket assigned", data={"ticket_id": ticket_id, "user_id": user_id})
+            return True
+        except Exception as e:
+            logger.error(f"Error assigning ticket: {e}")
+            return False
+
+    async def check_ticket_access(self, ticket_id: int, user_id: int, is_admin: bool = False) -> bool:
+        """
+        Check if a user has access to a specific ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            user_id: The user ID to check
+            is_admin: Whether the user is an admin
+
+        Returns:
+            True if user has access, False otherwise
+        """
+        if is_admin:
+            return True
+
+        try:
+            # Get ticket's assigned users
+            ticket_users = await self._request("GET", f"Ticket/{ticket_id}/Ticket_User")
+
+            if ticket_users and isinstance(ticket_users, list):
+                for tu in ticket_users:
+                    if tu.get("users_id") == user_id and tu.get("type") == 2:  # type 2 = technician
+                        return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking ticket access: {e}")
+            return False
+
     # Utility Methods
 
     async def test_connection(self) -> bool:
