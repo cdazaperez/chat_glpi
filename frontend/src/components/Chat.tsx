@@ -10,14 +10,17 @@ import {
   X,
   Ticket,
   HelpCircle,
+  User,
 } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
-import { SuggestedAction } from '@/types';
+import { SuggestedAction, ChatContext } from '@/types';
 
 interface ChatProps {
   glpiBaseUrl?: string;
+  userContext?: ChatContext;
+  onLogout?: () => void;
 }
 
 function WelcomeMessage() {
@@ -120,7 +123,7 @@ function SuggestedActions({
   );
 }
 
-export function Chat({ glpiBaseUrl }: ChatProps) {
+export function Chat({ glpiBaseUrl, userContext, onLogout }: ChatProps) {
   const {
     messages,
     isLoading,
@@ -130,7 +133,7 @@ export function Chat({ glpiBaseUrl }: ChatProps) {
     clearChat,
     clearError,
     retryLastMessage,
-  } = useChat();
+  } = useChat({ context: userContext });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -163,16 +166,41 @@ export function Chat({ glpiBaseUrl }: ChatProps) {
           </div>
         </div>
 
-        {messages.length > 0 && (
-          <button
-            onClick={clearChat}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-            title="Clear conversation"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span className="hidden sm:inline">Clear</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {userContext?.user_email && (
+            <div className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
+              <User className="w-4 h-4" />
+              <span className="hidden sm:inline max-w-[150px] truncate" title={userContext.user_email}>
+                {userContext.user_email}
+              </span>
+              {userContext.user_role && (
+                <span className="text-xs px-2 py-0.5 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-full">
+                  {userContext.user_role}
+                </span>
+              )}
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="ml-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  title="Cerrar sesión"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+
+          {messages.length > 0 && (
+            <button
+              onClick={clearChat}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+              title="Clear conversation"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Clear</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Messages */}
