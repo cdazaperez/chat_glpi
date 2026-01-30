@@ -1109,7 +1109,10 @@ class GLPIClient:
 
     async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """
-        Get a GLPI user by email address.
+        Get a GLPI user by email address or username.
+
+        First searches by email, then falls back to searching by username
+        (the part before @ in the email address).
 
         Args:
             email: The user's email address
@@ -1128,7 +1131,7 @@ class GLPIClient:
         logger.info("Looking up GLPI user by email", data={"email": email})
 
         try:
-            # Search for user by email
+            # First, search for user by email field
             params = {
                 "criteria[0][field]": 5,  # Email field
                 "criteria[0][searchtype]": "equals",
@@ -1136,6 +1139,7 @@ class GLPIClient:
                 "forcedisplay[0]": 2,  # ID
                 "forcedisplay[1]": 34,  # Name (realname)
                 "forcedisplay[2]": 5,  # Email
+                "forcedisplay[3]": 1,  # Username/login
                 "range": "0-0",
             }
 
@@ -1147,14 +1151,46 @@ class GLPIClient:
                     "id": user_data.get("2") or user_data.get("id"),
                     "name": user_data.get("34", ""),
                     "email": user_data.get("5", email),
+                    "username": user_data.get("1", ""),
                 }
 
                 # Cache for 1 hour
                 await self._set_cached(cache_key, user, 3600)
-                logger.info("GLPI user found", data={"user_id": user["id"], "email": email})
+                logger.info("GLPI user found by email", data={"user_id": user["id"], "email": email})
                 return user
 
-            logger.info("GLPI user not found", data={"email": email})
+            # If not found by email, try searching by username (part before @)
+            username = email.split("@")[0] if "@" in email else email
+            logger.info("User not found by email, trying username", data={"username": username})
+
+            params_username = {
+                "criteria[0][field]": 1,  # Username/login field
+                "criteria[0][searchtype]": "equals",
+                "criteria[0][value]": username,
+                "forcedisplay[0]": 2,  # ID
+                "forcedisplay[1]": 34,  # Name (realname)
+                "forcedisplay[2]": 5,  # Email
+                "forcedisplay[3]": 1,  # Username/login
+                "range": "0-0",
+            }
+
+            result = await self._request("GET", "search/User", params=params_username)
+
+            if result and "data" in result and len(result["data"]) > 0:
+                user_data = result["data"][0]
+                user = {
+                    "id": user_data.get("2") or user_data.get("id"),
+                    "name": user_data.get("34", ""),
+                    "email": user_data.get("5", email),
+                    "username": user_data.get("1", username),
+                }
+
+                # Cache for 1 hour
+                await self._set_cached(cache_key, user, 3600)
+                logger.info("GLPI user found by username", data={"user_id": user["id"], "username": username})
+                return user
+
+            logger.info("GLPI user not found", data={"email": email, "username": username})
             return None
 
         except Exception as e:
