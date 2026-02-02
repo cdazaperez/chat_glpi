@@ -13,15 +13,18 @@ load_dotenv()
 from app.core.config import get_settings
 from app.core.logging import setup_logging, get_logger
 from app.api.routes import router, init_services
+from app.api.auth_routes import router as auth_router, init_auth_service
 from app.api.middleware import (
     RateLimitMiddleware,
     CorrelationIdMiddleware,
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
+    JWTAuthMiddleware,
 )
 from app.services.glpi_client import GLPIClient
 from app.services.cache import get_cache, close_cache
 from app.services.session import SessionService
+from app.services.auth import AuthService
 
 
 @asynccontextmanager
@@ -51,10 +54,21 @@ async def lifespan(app: FastAPI):
     # Initialize session service
     session_service = SessionService(cache=cache if cache.is_connected else None)
 
+    # Initialize authentication service
+    auth_service = AuthService(
+        glpi_client=glpi_client,
+        cache=cache if cache.is_connected else None
+    )
+    init_auth_service(auth_service)
+
     # Initialize route services
     init_services(glpi_client, session_service)
 
-    logger.info("Helpdesk AI Backend started successfully")
+    settings = get_settings()
+    logger.info(
+        "Helpdesk AI Backend started successfully",
+        data={"auth_enabled": settings.auth.enabled}
+    )
 
     yield
 
@@ -88,6 +102,12 @@ def create_app() -> FastAPI:
     # Add middleware (order matters - first added = last executed)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
+
+    # JWT Authentication middleware (only if auth is enabled)
+    if settings.auth.enabled:
+        app.add_middleware(JWTAuthMiddleware)
+        logger.info("JWT Authentication middleware enabled")
+
     app.add_middleware(
         RateLimitMiddleware,
         requests_per_minute=settings.app.rate_limit_rpm
@@ -113,11 +133,13 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(router)
+    app.include_router(auth_router)
 
     logger.info(
         "Application configured",
         data={
             "env": settings.app.env,
+            "auth_enabled": settings.auth.enabled,
             "cors_origins": settings.app.allowed_origins_list,
             "rate_limit_rpm": settings.app.rate_limit_rpm,
         }

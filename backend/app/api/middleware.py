@@ -195,3 +195,104 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             )
 
         return response
+
+
+class JWTAuthMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to validate JWT tokens for protected routes.
+
+    Public routes (no auth required):
+    - /health, /health/ready
+    - /api/auth/* (login, refresh, etc.)
+    - /docs, /openapi.json (if enabled)
+
+    Protected routes (auth required):
+    - /api/chat
+    - /api/session/*
+    - /api/ticket/*
+    """
+
+    # Routes that don't require authentication
+    PUBLIC_PATHS = [
+        "/health",
+        "/health/ready",
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+    ]
+
+    def __init__(self, app, auth_service=None):
+        super().__init__(app)
+        self.auth_service = auth_service
+        self._settings = None
+
+    @property
+    def settings(self):
+        if self._settings is None:
+            self._settings = get_settings()
+        return self._settings
+
+    def _is_public_path(self, path: str) -> bool:
+        """Check if the path is public (no auth required)."""
+        for public_path in self.PUBLIC_PATHS:
+            if path == public_path or path.startswith(f"{public_path}/"):
+                return True
+        return False
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        logger = _get_logger()
+
+        # Skip auth check if authentication is disabled
+        if not self.settings.auth.enabled:
+            return await call_next(request)
+
+        # Skip auth for public paths
+        if self._is_public_path(request.url.path):
+            return await call_next(request)
+
+        # Skip auth for OPTIONS requests (CORS preflight)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Get token from Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            logger.warning("Missing Authorization header", data={"path": request.url.path})
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing authorization header"}
+            )
+
+        # Extract token from "Bearer <token>"
+        parts = auth_header.split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid authorization header format"}
+            )
+
+        token = parts[1]
+
+        # Validate token
+        if not self.auth_service:
+            from app.services.auth import get_auth_service
+            self.auth_service = get_auth_service()
+
+        is_valid, payload, error = self.auth_service.validate_token(token)
+
+        if not is_valid:
+            logger.warning("Invalid token", data={"path": request.url.path, "error": error})
+            return JSONResponse(
+                status_code=401,
+                content={"detail": error or "Invalid token"}
+            )
+
+        # Add user info to request state for use in route handlers
+        request.state.user = payload
+        request.state.user_id = payload.get("glpi_user_id")
+        request.state.user_role = payload.get("role")
+        request.state.user_email = payload.get("email")
+
+        return await call_next(request)

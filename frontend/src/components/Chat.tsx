@@ -21,6 +21,8 @@ interface ChatProps {
   glpiBaseUrl?: string;
   userContext?: ChatContext;
   onLogout?: () => void;
+  userName?: string;
+  userRole?: string;
 }
 
 function WelcomeMessage() {
@@ -123,7 +125,7 @@ function SuggestedActions({
   );
 }
 
-export function Chat({ glpiBaseUrl, userContext, onLogout }: ChatProps) {
+export function Chat({ glpiBaseUrl, userContext, onLogout, userName, userRole }: ChatProps) {
   const {
     messages,
     isLoading,
@@ -148,6 +150,10 @@ export function Chat({ glpiBaseUrl, userContext, onLogout }: ChatProps) {
     }
   };
 
+  // Display name - prefer userName prop, then email from context
+  const displayName = userName || userContext?.user_email || 'Usuario';
+  const displayRole = userRole || userContext?.user_role;
+
   return (
     <div className="flex flex-col h-full bg-white dark:bg-gray-900">
       {/* Header */}
@@ -167,15 +173,15 @@ export function Chat({ glpiBaseUrl, userContext, onLogout }: ChatProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          {userContext?.user_email && (
+          {(userName || userContext?.user_email) && (
             <div className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 rounded-lg">
               <User className="w-4 h-4" />
-              <span className="hidden sm:inline max-w-[150px] truncate" title={userContext.user_email}>
-                {userContext.user_email}
+              <span className="hidden sm:inline max-w-[150px] truncate" title={displayName}>
+                {displayName}
               </span>
-              {userContext.user_role && (
+              {displayRole && (
                 <span className="text-xs px-2 py-0.5 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-full">
-                  {userContext.user_role}
+                  {displayRole}
                 </span>
               )}
               {onLogout && (

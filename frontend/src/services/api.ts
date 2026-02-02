@@ -8,6 +8,7 @@ import {
   HealthStatus,
   ErrorResponse,
 } from '@/types';
+import { authService } from './auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -22,8 +23,29 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Get headers including auth token if available
+ */
+function getHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    ...authService.getAuthHeader(),
+  };
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   const correlationId = response.headers.get('X-Correlation-ID') || undefined;
+
+  // Handle 401 Unauthorized - try to refresh token
+  if (response.status === 401) {
+    const newToken = await authService.refreshAccessToken();
+    if (newToken) {
+      // Token refreshed, but can't retry from here
+      // The component should handle this
+      throw new ApiError('Session expired. Please try again.', 401, correlationId);
+    }
+    throw new ApiError('Session expired. Please login again.', 401, correlationId);
+  }
 
   if (!response.ok) {
     let errorMessage = 'An error occurred';
@@ -48,9 +70,7 @@ export const api = {
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const response = await fetch(`${API_URL}/api/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -63,9 +83,7 @@ export const api = {
   async createTicket(request: TicketCreateRequest): Promise<TicketCreateResponse> {
     const response = await fetch(`${API_URL}/api/ticket`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -92,9 +110,7 @@ export const api = {
   }> {
     const response = await fetch(`${API_URL}/api/session/${sessionId}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getHeaders(),
     });
 
     return handleResponse(response);
@@ -106,9 +122,7 @@ export const api = {
   async deleteSession(sessionId: string): Promise<void> {
     const response = await fetch(`${API_URL}/api/session/${sessionId}`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getHeaders(),
     });
 
     if (!response.ok) {
