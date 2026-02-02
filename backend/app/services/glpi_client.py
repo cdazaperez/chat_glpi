@@ -699,22 +699,92 @@ class GLPIClient:
             return []
 
         tickets = []
-        for item in result.get("data", []):
+        for idx, item in enumerate(result.get("data", [])):
             try:
-                status_val = item.get("12", 1)
+                # Log the raw item structure for debugging (only first item)
+                if idx == 0:
+                    logger.debug(
+                        "Raw ticket search result item structure",
+                        data={"keys": list(item.keys()), "sample": {k: str(v)[:50] for k, v in list(item.items())[:10]}}
+                    )
+
+                # GLPI search API returns fields with their field numbers as keys
+                # But the keys might be strings or integers depending on GLPI version
+                # Try multiple key formats to find the data
+
+                # Get ID - field 1 in GLPI
+                ticket_id = None
+                for key in ["1", 1, "id", "2"]:
+                    val = item.get(key)
+                    if val is not None and isinstance(val, (int, float)):
+                        ticket_id = int(val)
+                        break
+                    elif val is not None and isinstance(val, str) and val.isdigit():
+                        ticket_id = int(val)
+                        break
+
+                # Get Name - field 2 in GLPI
+                ticket_name = ""
+                for key in ["2", 2, "name", "1"]:
+                    val = item.get(key)
+                    if val is not None and isinstance(val, str) and not val.isdigit():
+                        ticket_name = val
+                        break
+
+                # If we still don't have ID and name, try to detect them from values
+                if ticket_id is None or not ticket_name:
+                    for key, val in item.items():
+                        if ticket_id is None and isinstance(val, int) and val > 0 and val < 100000:
+                            ticket_id = val
+                        elif not ticket_name and isinstance(val, str) and len(val) > 3 and not val.isdigit():
+                            ticket_name = val
+
+                if ticket_id is None:
+                    logger.warning(
+                        "Could not find ticket ID in search result",
+                        data={"item_keys": list(item.keys()), "item_preview": str(item)[:200]}
+                    )
+                    continue
+
+                # Get other fields with fallbacks
+                status_val = item.get("12") or item.get(12) or item.get("status") or 1
+                if isinstance(status_val, str) and status_val.isdigit():
+                    status_val = int(status_val)
+                elif not isinstance(status_val, int):
+                    status_val = 1
+
+                urgency_val = item.get("10") or item.get(10) or item.get("urgency") or 3
+                if isinstance(urgency_val, str) and urgency_val.isdigit():
+                    urgency_val = int(urgency_val)
+
+                impact_val = item.get("11") or item.get(11) or item.get("impact") or 3
+                if isinstance(impact_val, str) and impact_val.isdigit():
+                    impact_val = int(impact_val)
+
+                category_val = item.get("7") or item.get(7) or item.get("category_id")
+                if category_val is not None:
+                    if isinstance(category_val, str) and category_val.isdigit():
+                        category_val = int(category_val)
+                    elif isinstance(category_val, str):
+                        # Category might be returned as name instead of ID
+                        category_val = None
+
                 ticket = GLPITicket(
-                    id=item.get("1") or item.get("id", 0),
-                    name=item.get("2", ""),
-                    content=item.get("21"),
+                    id=ticket_id,
+                    name=ticket_name or f"Ticket #{ticket_id}",
+                    content=item.get("21") or item.get(21) or item.get("content"),
                     status=status_val,
                     status_name=self.STATUS_NAMES.get(status_val),
-                    urgency=item.get("10", 3),
-                    impact=item.get("11", 3),
-                    category_id=item.get("7"),
+                    urgency=urgency_val,
+                    impact=impact_val,
+                    category_id=category_val,
                 )
                 tickets.append(ticket)
             except Exception as e:
-                logger.warning(f"Error parsing ticket: {e}")
+                logger.warning(
+                    f"Error parsing ticket: {e}",
+                    data={"item_preview": str(item)[:300]}
+                )
                 continue
 
         return tickets
