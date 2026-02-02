@@ -1359,22 +1359,28 @@ class GLPIClient:
         status: Optional[str] = None,
         priority: Optional[int] = None,
         search: Optional[str] = None,
-        limit: int = 20
+        limit: int = 20,
+        include_requester: bool = True
     ) -> List[GLPITicket]:
         """
-        Get tickets assigned to a specific user.
+        Get tickets assigned to or created by a specific user.
 
         Args:
             user_id: The GLPI user ID
-            status: Filter by status ('new', 'assigned', 'pending', 'solved', 'closed', 'all')
+            status: Filter by status ('new', 'assigned', 'pending', 'solved', 'closed', 'open', 'all')
             priority: Filter by priority (1-5)
             search: Optional search query
             limit: Maximum results
+            include_requester: Also include tickets where user is the requester
 
         Returns:
-            List of tickets assigned to the user
+            List of tickets related to the user
         """
-        logger.info("Getting tickets assigned to user", data={"user_id": user_id, "status": status})
+        logger.info("Getting tickets for user", data={
+            "user_id": user_id,
+            "status": status,
+            "include_requester": include_requester
+        })
 
         # Build search parameters
         params = {
@@ -1386,6 +1392,8 @@ class GLPIClient:
             "forcedisplay[5]": 11,  # Impact
             "forcedisplay[6]": 7,   # Category
             "forcedisplay[7]": 3,   # Priority
+            "forcedisplay[8]": 5,   # Technician
+            "forcedisplay[9]": 4,   # Requester
             "range": f"0-{limit - 1}",
             "sort": 19,  # Sort by modification date
             "order": "DESC",
@@ -1393,23 +1401,51 @@ class GLPIClient:
 
         criteria_idx = 0
 
-        # Filter by assigned technician (field 5 = technician in charge)
-        params[f"criteria[{criteria_idx}][field]"] = 5
-        params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
-        params[f"criteria[{criteria_idx}][value]"] = user_id
-        criteria_idx += 1
+        # Filter by assigned technician (field 5) OR requester (field 4)
+        if include_requester:
+            # Technician in charge
+            params[f"criteria[{criteria_idx}][field]"] = 5
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
+            # OR Requester
+            params[f"criteria[{criteria_idx}][link]"] = "OR"
+            params[f"criteria[{criteria_idx}][field]"] = 4
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
+        else:
+            # Only technician in charge
+            params[f"criteria[{criteria_idx}][field]"] = 5
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
 
         # Add status filter
+        status_map = {
+            "new": self.STATUS_NEW,
+            "assigned": self.STATUS_ASSIGNED,
+            "planned": self.STATUS_PLANNED,
+            "pending": self.STATUS_PENDING,
+            "solved": self.STATUS_SOLVED,
+            "closed": self.STATUS_CLOSED,
+        }
+
         if status and status != "all":
-            status_map = {
-                "new": self.STATUS_NEW,
-                "assigned": self.STATUS_ASSIGNED,
-                "planned": self.STATUS_PLANNED,
-                "pending": self.STATUS_PENDING,
-                "solved": self.STATUS_SOLVED,
-                "closed": self.STATUS_CLOSED,
-            }
-            if status in status_map:
+            if status == "open":
+                # All open tickets (new, assigned, pending, planned)
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+                params[f"criteria[{criteria_idx}][field]"] = 12
+                params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                params[f"criteria[{criteria_idx}][value]"] = self.STATUS_NEW
+                criteria_idx += 1
+                for s in [self.STATUS_ASSIGNED, self.STATUS_PENDING, self.STATUS_PLANNED]:
+                    params[f"criteria[{criteria_idx}][link]"] = "OR"
+                    params[f"criteria[{criteria_idx}][field]"] = 12
+                    params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                    params[f"criteria[{criteria_idx}][value]"] = s
+                    criteria_idx += 1
+            elif status in status_map:
                 params[f"criteria[{criteria_idx}][link]"] = "AND"
                 params[f"criteria[{criteria_idx}][field]"] = 12
                 params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
@@ -1434,11 +1470,117 @@ class GLPIClient:
 
         try:
             result = await self._request("GET", "search/Ticket", params=params)
-            return self._parse_ticket_search_results(result)
+            tickets = self._parse_ticket_search_results(result)
+            logger.info("Found tickets for user", data={
+                "user_id": user_id,
+                "count": len(tickets),
+                "status_filter": status
+            })
+            return tickets
         except GLPINotFoundError:
+            logger.info("No tickets found for user", data={"user_id": user_id})
             return []
         except Exception as e:
-            logger.error(f"Error getting assigned tickets: {e}")
+            logger.error(f"Error getting user tickets: {e}", data={"user_id": user_id})
+            return []
+
+    async def get_all_tickets(
+        self,
+        status: Optional[str] = None,
+        priority: Optional[int] = None,
+        search: Optional[str] = None,
+        limit: int = 20
+    ) -> List[GLPITicket]:
+        """
+        Get all tickets (for admin users).
+
+        Args:
+            status: Filter by status ('new', 'assigned', 'pending', 'solved', 'closed', 'open', 'all')
+            priority: Filter by priority (1-5)
+            search: Optional search query
+            limit: Maximum results
+
+        Returns:
+            List of tickets
+        """
+        logger.info("Getting all tickets (admin)", data={"status": status, "limit": limit})
+
+        # Build search parameters
+        params = {
+            "forcedisplay[0]": 1,   # ID
+            "forcedisplay[1]": 2,   # Name
+            "forcedisplay[2]": 21,  # Content
+            "forcedisplay[3]": 12,  # Status
+            "forcedisplay[4]": 10,  # Urgency
+            "forcedisplay[5]": 11,  # Impact
+            "forcedisplay[6]": 7,   # Category
+            "forcedisplay[7]": 3,   # Priority
+            "forcedisplay[8]": 5,   # Technician
+            "forcedisplay[9]": 4,   # Requester
+            "range": f"0-{limit - 1}",
+            "sort": 19,  # Sort by modification date
+            "order": "DESC",
+        }
+
+        criteria_idx = 0
+
+        # Add status filter
+        status_map = {
+            "new": self.STATUS_NEW,
+            "assigned": self.STATUS_ASSIGNED,
+            "planned": self.STATUS_PLANNED,
+            "pending": self.STATUS_PENDING,
+            "solved": self.STATUS_SOLVED,
+            "closed": self.STATUS_CLOSED,
+        }
+
+        if status and status != "all":
+            if status == "open":
+                # All open tickets (new, assigned, pending, planned)
+                params[f"criteria[{criteria_idx}][field]"] = 12
+                params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                params[f"criteria[{criteria_idx}][value]"] = self.STATUS_NEW
+                criteria_idx += 1
+                for s in [self.STATUS_ASSIGNED, self.STATUS_PENDING, self.STATUS_PLANNED]:
+                    params[f"criteria[{criteria_idx}][link]"] = "OR"
+                    params[f"criteria[{criteria_idx}][field]"] = 12
+                    params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                    params[f"criteria[{criteria_idx}][value]"] = s
+                    criteria_idx += 1
+            elif status in status_map:
+                params[f"criteria[{criteria_idx}][field]"] = 12
+                params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                params[f"criteria[{criteria_idx}][value]"] = status_map[status]
+                criteria_idx += 1
+
+        # Add priority filter
+        if priority:
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 3
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = priority
+            criteria_idx += 1
+
+        # Add search filter
+        if search and search.strip():
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 1  # Name
+            params[f"criteria[{criteria_idx}][searchtype]"] = "contains"
+            params[f"criteria[{criteria_idx}][value]"] = search.strip()
+            criteria_idx += 1
+
+        try:
+            result = await self._request("GET", "search/Ticket", params=params)
+            tickets = self._parse_ticket_search_results(result)
+            logger.info("Found all tickets", data={"count": len(tickets), "status_filter": status})
+            return tickets
+        except GLPINotFoundError:
+            logger.info("No tickets found")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting all tickets: {e}")
             return []
 
     async def update_ticket(

@@ -354,14 +354,14 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "glpi_list_my_tickets",
-            "description": "List tickets assigned to the current technician. Use this when the user asks for 'my tickets' or 'my cases'.",
+            "description": "List tickets for the current user. For technicians: shows assigned tickets. For admins: can show all tickets. Use when user asks for 'my tickets', 'my cases', 'pending tickets', etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["new", "assigned", "pending", "solved", "closed", "all"],
-                        "description": "Filter by ticket status (default: all open tickets)"
+                        "enum": ["new", "assigned", "pending", "planned", "open", "solved", "closed", "all"],
+                        "description": "Filter by status. 'open' = all without solution (new+assigned+pending+planned). Default: all"
                     },
                     "priority": {
                         "type": "integer",
@@ -376,6 +376,10 @@ TOOLS = [
                         "type": "integer",
                         "description": "Maximum number of tickets to return (default: 20)",
                         "default": 20
+                    },
+                    "all_tickets": {
+                        "type": "boolean",
+                        "description": "If true and user is admin, list ALL tickets not just assigned ones. Default: false"
                     }
                 },
                 "required": []
@@ -822,22 +826,51 @@ class LLMOrchestrator:
                 return result, True
 
             elif tool_name == "glpi_list_my_tickets":
-                # Get user ID
-                users_id = await self._resolve_glpi_user_id()
-                if not users_id:
-                    return "No se pudo identificar al usuario. Asegúrate de que el email esté configurado en el contexto.", False
+                status_filter = arguments.get("status", "all")
+                is_admin = self._user_profile and self._user_profile.get("is_admin", False)
+                all_tickets_requested = arguments.get("all_tickets", False)
 
-                tickets = await self.glpi.get_tickets_assigned_to_user(
-                    user_id=users_id,
-                    status=arguments.get("status"),
-                    priority=arguments.get("priority"),
-                    search=arguments.get("search"),
-                    limit=arguments.get("limit", 20)
-                )
+                # If admin requests all tickets, use get_all_tickets
+                if is_admin and all_tickets_requested:
+                    logger.info("Admin requesting all tickets", data={"status": status_filter})
+                    tickets = await self.glpi.get_all_tickets(
+                        status=status_filter,
+                        priority=arguments.get("priority"),
+                        search=arguments.get("search"),
+                        limit=arguments.get("limit", 20)
+                    )
+                    context_msg = "en el sistema"
+                else:
+                    # Get user ID for personal tickets
+                    users_id = await self._resolve_glpi_user_id()
+                    if not users_id:
+                        # If user not found but is admin, still allow viewing all tickets
+                        if is_admin:
+                            logger.info("User not found in GLPI but is admin, showing all tickets")
+                            tickets = await self.glpi.get_all_tickets(
+                                status=status_filter,
+                                priority=arguments.get("priority"),
+                                search=arguments.get("search"),
+                                limit=arguments.get("limit", 20)
+                            )
+                            context_msg = "en el sistema (usuario no identificado en GLPI)"
+                        else:
+                            return "No he podido identificar tu usuario en GLPI. Por favor, verifica que tu email esté registrado correctamente en el sistema.", False
+
+                    else:
+                        tickets = await self.glpi.get_tickets_assigned_to_user(
+                            user_id=users_id,
+                            status=status_filter,
+                            priority=arguments.get("priority"),
+                            search=arguments.get("search"),
+                            limit=arguments.get("limit", 20),
+                            include_requester=True
+                        )
+                        context_msg = "asignados a ti o donde eres solicitante"
 
                 if not tickets:
-                    status_filter = arguments.get("status", "todos los estados")
-                    return f"No se encontraron tickets asignados a ti con el filtro: {status_filter}.", True
+                    status_desc = f"con estado '{status_filter}'" if status_filter != "all" else "en ningún estado"
+                    return f"No se encontraron tickets {context_msg} {status_desc}.", True
 
                 result = self._format_my_tickets(tickets)
                 return result, True
