@@ -1111,8 +1111,10 @@ class GLPIClient:
         """
         Get a GLPI user by email address or username.
 
-        First searches by email, then falls back to searching by username
-        (the part before @ in the email address).
+        Searches in order:
+        1. By exact email match
+        2. By username (part before @) with exact match
+        3. By username with 'contains' search
 
         Args:
             email: The user's email address
@@ -1128,73 +1130,95 @@ class GLPIClient:
         if cached:
             return cached
 
-        logger.info("Looking up GLPI user by email", data={"email": email})
+        logger.info("Looking up GLPI user", data={"email": email})
+
+        # Extract username from email
+        username = email.split("@")[0] if "@" in email else email
+
+        # Define search strategies in order of preference
+        search_strategies = [
+            # Strategy 1: Search by exact email
+            {
+                "name": "email_exact",
+                "field": 5,  # Email field
+                "searchtype": "equals",
+                "value": email,
+            },
+            # Strategy 2: Search by exact username (login field)
+            {
+                "name": "username_exact",
+                "field": 1,  # Name/login field
+                "searchtype": "equals",
+                "value": username,
+            },
+            # Strategy 3: Search by username contains
+            {
+                "name": "username_contains",
+                "field": 1,  # Name/login field
+                "searchtype": "contains",
+                "value": username,
+            },
+            # Strategy 4: Search by email contains username
+            {
+                "name": "email_contains_username",
+                "field": 5,  # Email field
+                "searchtype": "contains",
+                "value": username,
+            },
+        ]
 
         try:
-            # First, search for user by email field
-            params = {
-                "criteria[0][field]": 5,  # Email field
-                "criteria[0][searchtype]": "equals",
-                "criteria[0][value]": email,
-                "forcedisplay[0]": 2,  # ID
-                "forcedisplay[1]": 34,  # Name (realname)
-                "forcedisplay[2]": 5,  # Email
-                "forcedisplay[3]": 1,  # Username/login
-                "range": "0-0",
-            }
-
-            result = await self._request("GET", "search/User", params=params)
-
-            if result and "data" in result and len(result["data"]) > 0:
-                user_data = result["data"][0]
-                user = {
-                    "id": user_data.get("2") or user_data.get("id"),
-                    "name": user_data.get("34", ""),
-                    "email": user_data.get("5", email),
-                    "username": user_data.get("1", ""),
+            for strategy in search_strategies:
+                params = {
+                    "criteria[0][field]": strategy["field"],
+                    "criteria[0][searchtype]": strategy["searchtype"],
+                    "criteria[0][value]": strategy["value"],
+                    "forcedisplay[0]": 2,  # ID
+                    "forcedisplay[1]": 34,  # Name (realname)
+                    "forcedisplay[2]": 5,  # Email
+                    "forcedisplay[3]": 1,  # Username/login
+                    "range": "0-0",
                 }
 
-                # Cache for 1 hour
-                await self._set_cached(cache_key, user, 3600)
-                logger.info("GLPI user found by email", data={"user_id": user["id"], "email": email})
-                return user
+                logger.debug(
+                    f"Trying search strategy: {strategy['name']}",
+                    data={"field": strategy["field"], "value": strategy["value"]}
+                )
 
-            # If not found by email, try searching by username (part before @)
-            username = email.split("@")[0] if "@" in email else email
-            logger.info("User not found by email, trying username", data={"username": username})
+                result = await self._request("GET", "search/User", params=params)
 
-            params_username = {
-                "criteria[0][field]": 1,  # Username/login field
-                "criteria[0][searchtype]": "equals",
-                "criteria[0][value]": username,
-                "forcedisplay[0]": 2,  # ID
-                "forcedisplay[1]": 34,  # Name (realname)
-                "forcedisplay[2]": 5,  # Email
-                "forcedisplay[3]": 1,  # Username/login
-                "range": "0-0",
-            }
+                logger.debug(
+                    f"Search result for {strategy['name']}",
+                    data={"has_data": bool(result and "data" in result and len(result.get("data", [])) > 0)}
+                )
 
-            result = await self._request("GET", "search/User", params=params_username)
+                if result and "data" in result and len(result["data"]) > 0:
+                    user_data = result["data"][0]
+                    user = {
+                        "id": user_data.get("2") or user_data.get("id"),
+                        "name": user_data.get("34", ""),
+                        "email": user_data.get("5", email),
+                        "username": user_data.get("1", username),
+                    }
 
-            if result and "data" in result and len(result["data"]) > 0:
-                user_data = result["data"][0]
-                user = {
-                    "id": user_data.get("2") or user_data.get("id"),
-                    "name": user_data.get("34", ""),
-                    "email": user_data.get("5", email),
-                    "username": user_data.get("1", username),
-                }
+                    # Cache for 1 hour
+                    await self._set_cached(cache_key, user, 3600)
+                    logger.info(
+                        "GLPI user found",
+                        data={
+                            "user_id": user["id"],
+                            "strategy": strategy["name"],
+                            "email": email,
+                            "username": username
+                        }
+                    )
+                    return user
 
-                # Cache for 1 hour
-                await self._set_cached(cache_key, user, 3600)
-                logger.info("GLPI user found by username", data={"user_id": user["id"], "username": username})
-                return user
-
-            logger.info("GLPI user not found", data={"email": email, "username": username})
+            logger.info("GLPI user not found after all strategies", data={"email": email, "username": username})
             return None
 
         except Exception as e:
-            logger.error(f"Error looking up user by email: {e}")
+            logger.error(f"Error looking up user: {e}", data={"email": email, "username": username})
             return None
 
     async def get_user_id_by_email(self, email: str) -> Optional[int]:
