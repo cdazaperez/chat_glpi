@@ -114,18 +114,18 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "glpi_ticket_search",
-            "description": "Search for resolved/closed tickets in GLPI. Use this to find similar past issues and their solutions.",
+            "description": "Search for tickets in GLPI. Can search by keywords or list tickets by status. Use this to find similar past issues, open tickets, or tickets pending solution.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Search query - keywords, error messages, or issue description"
+                        "description": "Optional search query - keywords, error messages, or issue description. Leave empty to list all tickets matching the status filter."
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["solved", "closed", "resolved", "all"],
-                        "description": "Filter by ticket status (default: solved)",
+                        "enum": ["new", "assigned", "pending", "planned", "open", "solved", "closed", "resolved", "all"],
+                        "description": "Filter by ticket status. 'open' = new+assigned+pending+planned (without solution). 'resolved' = solved+closed. Default: solved",
                         "default": "solved"
                     },
                     "category_id": {
@@ -138,7 +138,7 @@ TOOLS = [
                         "default": 5
                     }
                 },
-                "required": ["query"]
+                "required": []
             }
         }
     },
@@ -667,16 +667,19 @@ class LLMOrchestrator:
                     return "Failed to create Knowledge Base article. Please try again or contact support.", False
 
             elif tool_name == "glpi_ticket_search":
+                query = arguments.get("query", "")
+                status = arguments.get("status", "solved")
                 tickets = await self.glpi.search_tickets(
-                    query=arguments["query"],
-                    status=arguments.get("status", "solved"),
+                    query=query,
+                    status=status,
                     category_id=arguments.get("category_id"),
                     limit=arguments.get("limit", 5)
                 )
                 self._sources_consulted.append("tickets")
 
                 if not tickets:
-                    return "No resolved tickets found matching the query.", True
+                    status_desc = "matching the query" if query else f"with status '{status}'"
+                    return f"No tickets found {status_desc}.", True
 
                 result = self._format_ticket_search_results(tickets)
                 return result, True

@@ -587,7 +587,59 @@ class GLPIClient:
             criteria_idx += 1
 
         # Add status filter
-        if status == "solved":
+        if status == "new":
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_NEW
+            criteria_idx += 1
+        elif status == "assigned":
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_ASSIGNED
+            criteria_idx += 1
+        elif status == "pending":
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_PENDING
+            criteria_idx += 1
+        elif status == "planned":
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_PLANNED
+            criteria_idx += 1
+        elif status == "open":
+            # All tickets without solution: new, assigned, pending, planned
+            if criteria_idx > 0:
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+            # Use a group to combine with OR
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_NEW
+            criteria_idx += 1
+            params[f"criteria[{criteria_idx}][link]"] = "OR"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_ASSIGNED
+            criteria_idx += 1
+            params[f"criteria[{criteria_idx}][link]"] = "OR"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_PENDING
+            criteria_idx += 1
+            params[f"criteria[{criteria_idx}][link]"] = "OR"
+            params[f"criteria[{criteria_idx}][field]"] = 12
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = self.STATUS_PLANNED
+            criteria_idx += 1
+        elif status == "solved":
             if criteria_idx > 0:
                 params[f"criteria[{criteria_idx}][link]"] = "AND"
             params[f"criteria[{criteria_idx}][field]"] = 12
