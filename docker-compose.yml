@@ -45,6 +45,10 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - REDIS_KB_CACHE_TTL=${REDIS_KB_CACHE_TTL:-3600}
       - REDIS_TICKET_CACHE_TTL=${REDIS_TICKET_CACHE_TTL:-900}
+      # Authentication Configuration
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      - AUTH_TOKEN_EXPIRY_MINUTES=${AUTH_TOKEN_EXPIRY_MINUTES:-60}
     depends_on:
       redis:
         condition: service_healthy
