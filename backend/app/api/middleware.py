@@ -218,6 +218,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         "/health/ready",
         "/api/auth/login",
         "/api/auth/refresh",
+        "/api/auth/config",
+        "/api/auth/status",
         "/docs",
         "/openapi.json",
         "/redoc",
