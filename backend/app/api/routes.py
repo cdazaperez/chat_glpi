@@ -18,11 +18,16 @@ from app.models.schemas import (
     HealthStatus,
     ErrorResponse,
     MessageRole,
+    LoginRequest,
+    LoginResponse,
+    AuthStatusResponse,
 )
 from app.services.glpi_client import GLPIClient, GLPIError
 from app.services.llm_orchestrator import LLMOrchestrator, GuardrailViolation
 from app.services.session import SessionService
 from app.services.cache import get_cache, CacheService
+from app.services.auth import AuthService, AuthError, TokenPayload
+from app.api.auth import require_auth, get_auth_service
 
 logger = get_logger(__name__)
 
@@ -115,6 +120,88 @@ async def readiness_check(
     )
 
 
+# Authentication endpoints
+
+@router.post(
+    "/api/auth/login",
+    response_model=LoginResponse,
+    responses={
+        401: {"model": ErrorResponse, "description": "Invalid credentials"},
+        503: {"model": ErrorResponse, "description": "Auth service unavailable"},
+    },
+    tags=["Auth"],
+)
+async def login(request: LoginRequest):
+    """
+    Authenticate a user with GLPI credentials and return a JWT token.
+
+    The user's username and password are validated against the GLPI API.
+    On success, a JWT token is returned for use in subsequent requests.
+    """
+    settings = get_settings()
+
+    if not settings.auth.enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Authentication is not enabled on this server."
+        )
+
+    try:
+        auth_service = get_auth_service()
+        user_info = await auth_service.authenticate_with_glpi(
+            request.username, request.password
+        )
+        token = auth_service.create_token(user_info)
+
+        logger.info("User logged in", data={"username": request.username})
+
+        return LoginResponse(
+            token=token,
+            token_type="bearer",
+            expires_in=settings.auth.token_expiry_minutes * 60,
+            user={
+                "id": user_info.get("id", ""),
+                "username": user_info.get("username", ""),
+                "email": user_info.get("email", ""),
+                "firstname": user_info.get("firstname", ""),
+                "lastname": user_info.get("lastname", ""),
+            },
+        )
+
+    except AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication service is temporarily unavailable."
+        )
+
+
+@router.get(
+    "/api/auth/status",
+    response_model=AuthStatusResponse,
+    tags=["Auth"],
+)
+async def auth_status(user: TokenPayload = Depends(require_auth)):
+    """
+    Check the current authentication status.
+
+    Returns whether auth is enabled and the current user info (if authenticated).
+    """
+    settings = get_settings()
+
+    return AuthStatusResponse(
+        authenticated=user.user_id != "anonymous",
+        auth_enabled=settings.auth.enabled,
+        user={
+            "id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+        } if user.user_id != "anonymous" else None,
+    )
+
+
 # Chat endpoints
 
 @router.post(
@@ -122,6 +209,7 @@ async def readiness_check(
     response_model=ChatResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid request"},
+        401: {"model": ErrorResponse, "description": "Authentication required"},
         429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
         500: {"model": ErrorResponse, "description": "Internal server error"},
         503: {"model": ErrorResponse, "description": "Service unavailable"},
@@ -130,6 +218,7 @@ async def readiness_check(
 )
 async def chat(
     request: ChatRequest,
+    user: TokenPayload = Depends(require_auth),
     glpi: GLPIClient = Depends(get_glpi_client),
     session_svc: SessionService = Depends(get_session_service),
 ):
@@ -150,6 +239,7 @@ async def chat(
         data={
             "session_id": request.session_id,
             "message_length": len(request.message),
+            "user": user.username,
         }
     )
 
@@ -240,12 +330,14 @@ async def chat(
     response_model=TicketCreateResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid request"},
+        401: {"model": ErrorResponse, "description": "Authentication required"},
         503: {"model": ErrorResponse, "description": "Service unavailable"},
     },
     tags=["Tickets"],
 )
 async def create_ticket(
     request: TicketCreateRequest,
+    user: TokenPayload = Depends(require_auth),
     glpi: GLPIClient = Depends(get_glpi_client),
     session_svc: SessionService = Depends(get_session_service),
 ):
@@ -255,7 +347,10 @@ async def create_ticket(
     This endpoint creates a ticket with the provided information.
     Use only when the user explicitly requests ticket creation.
     """
-    logger.info("Ticket creation requested", data={"title": request.title})
+    logger.info(
+        "Ticket creation requested",
+        data={"title": request.title, "user": user.username},
+    )
 
     try:
         ticket_id = await glpi.create_ticket(
@@ -304,11 +399,13 @@ async def create_ticket(
     "/api/session/{session_id}",
     tags=["Session"],
     responses={
+        401: {"model": ErrorResponse, "description": "Authentication required"},
         404: {"model": ErrorResponse, "description": "Session not found"},
     },
 )
 async def get_session(
     session_id: str,
+    user: TokenPayload = Depends(require_auth),
     session_svc: SessionService = Depends(get_session_service),
 ):
     """
@@ -340,9 +437,13 @@ async def get_session(
 @router.delete(
     "/api/session/{session_id}",
     tags=["Session"],
+    responses={
+        401: {"model": ErrorResponse, "description": "Authentication required"},
+    },
 )
 async def delete_session(
     session_id: str,
+    user: TokenPayload = Depends(require_auth),
     session_svc: SessionService = Depends(get_session_service),
 ):
     """

@@ -102,3 +102,39 @@ export interface ChatState {
   error: string | null;
   suggestedActions: SuggestedAction[];
 }
+
+// Authentication types
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  token: string;
+  token_type: string;
+  expires_in: number;
+  user: AuthUser;
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  email: string;
+  firstname?: string;
+  lastname?: string;
+}
+
+export interface AuthStatusResponse {
+  authenticated: boolean;
+  auth_enabled: boolean;
+  user: AuthUser | null;
+}
+
+export interface AuthState {
+  token: string | null;
+  user: AuthUser | null;
+  isAuthenticated: boolean;
+  authEnabled: boolean | null;
+  isLoading: boolean;
+  error: string | null;
+}

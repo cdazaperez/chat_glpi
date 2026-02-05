@@ -218,3 +218,26 @@ class ToolResult(BaseModel):
     content: str
     success: bool = True
     error: Optional[str] = None
+
+
+# Authentication Models
+
+class LoginRequest(BaseModel):
+    """Request body for user login."""
+    username: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=1, max_length=255)
+
+
+class LoginResponse(BaseModel):
+    """Response body for successful login."""
+    token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: Dict[str, Any]
+
+
+class AuthStatusResponse(BaseModel):
+    """Response for auth status check."""
+    authenticated: bool
+    auth_enabled: bool
+    user: Optional[Dict[str, Any]] = None

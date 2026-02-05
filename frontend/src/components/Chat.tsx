@@ -10,14 +10,19 @@ import {
   X,
   Ticket,
   HelpCircle,
+  LogOut,
+  User,
 } from 'lucide-react';
 import { useChat } from '@/hooks/useChat';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
-import { SuggestedAction } from '@/types';
+import { SuggestedAction, AuthUser } from '@/types';
 
 interface ChatProps {
   glpiBaseUrl?: string;
+  user?: AuthUser | null;
+  authEnabled?: boolean;
+  onLogout?: () => void;
 }
 
 function WelcomeMessage() {
@@ -120,7 +125,7 @@ function SuggestedActions({
   );
 }
 
-export function Chat({ glpiBaseUrl }: ChatProps) {
+export function Chat({ glpiBaseUrl, user, authEnabled, onLogout }: ChatProps) {
   const {
     messages,
     isLoading,
@@ -163,16 +168,36 @@ export function Chat({ glpiBaseUrl }: ChatProps) {
           </div>
         </div>
 
-        {messages.length > 0 && (
-          <button
-            onClick={clearChat}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-            title="Clear conversation"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span className="hidden sm:inline">Clear</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {authEnabled && user && (
+            <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-xs text-gray-500 dark:text-gray-400">
+              <User className="w-3.5 h-3.5" />
+              <span>{user.username}</span>
+            </div>
+          )}
+
+          {messages.length > 0 && (
+            <button
+              onClick={clearChat}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+              title="Clear conversation"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Clear</span>
+            </button>
+          )}
+
+          {authEnabled && onLogout && (
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Sign out</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Messages */}

@@ -7,9 +7,13 @@ import {
   TicketCreateResponse,
   HealthStatus,
   ErrorResponse,
+  LoginRequest,
+  LoginResponse,
+  AuthStatusResponse,
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const AUTH_TOKEN_KEY = 'helpdesk_ai_token';
 
 class ApiError extends Error {
   constructor(
@@ -20,6 +24,30 @@ class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -42,11 +70,13 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 export const api = {
+  // --- Authentication ---
+
   /**
-   * Send a chat message and get AI response
+   * Log in with GLPI credentials
    */
-  async chat(request: ChatRequest): Promise<ChatResponse> {
-    const response = await fetch(`${API_URL}/api/chat`, {
+  async login(request: LoginRequest): Promise<LoginResponse> {
+    const response = await fetch(`${API_URL}/api/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -54,8 +84,53 @@ export const api = {
       body: JSON.stringify(request),
     });
 
+    const data = await handleResponse<LoginResponse>(response);
+    setAuthToken(data.token);
+    return data;
+  },
+
+  /**
+   * Log out — clear stored token
+   */
+  logout(): void {
+    clearAuthToken();
+  },
+
+  /**
+   * Check authentication status
+   */
+  async authStatus(): Promise<AuthStatusResponse> {
+    const response = await fetch(`${API_URL}/api/auth/status`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    });
+
+    return handleResponse<AuthStatusResponse>(response);
+  },
+
+  /**
+   * Check if a token is stored locally
+   */
+  hasToken(): boolean {
+    return getAuthToken() !== null;
+  },
+
+  // --- Chat ---
+
+  /**
+   * Send a chat message and get AI response
+   */
+  async chat(request: ChatRequest): Promise<ChatResponse> {
+    const response = await fetch(`${API_URL}/api/chat`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(request),
+    });
+
     return handleResponse<ChatResponse>(response);
   },
+
+  // --- Tickets ---
 
   /**
    * Create a support ticket
@@ -63,14 +138,14 @@ export const api = {
   async createTicket(request: TicketCreateRequest): Promise<TicketCreateResponse> {
     const response = await fetch(`${API_URL}/api/ticket`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     });
 
     return handleResponse<TicketCreateResponse>(response);
   },
+
+  // --- Sessions ---
 
   /**
    * Get session history
@@ -92,9 +167,7 @@ export const api = {
   }> {
     const response = await fetch(`${API_URL}/api/session/${sessionId}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
     });
 
     return handleResponse(response);
@@ -106,15 +179,15 @@ export const api = {
   async deleteSession(sessionId: string): Promise<void> {
     const response = await fetch(`${API_URL}/api/session/${sessionId}`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
       throw new ApiError('Failed to delete session', response.status);
     }
   },
+
+  // --- Health ---
 
   /**
    * Check API health
@@ -139,4 +212,4 @@ export const api = {
   },
 };
 
-export { ApiError };
+export { ApiError, clearAuthToken };

@@ -21,6 +21,9 @@ redis==5.0.1
 # Retry logic
 tenacity==8.2.3
 
+# JWT authentication
+PyJWT==2.8.0
+
 # Environment variables
 python-dotenv==1.0.1
 
