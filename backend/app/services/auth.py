@@ -209,16 +209,19 @@ class AuthService:
             AuthError: If token is invalid or expired
         """
         try:
-            # Build allowed issuers
-            issuers = self.settings.auth.jwt_issuers_list or ["helpdesk-ai"]
+            allowed_issuers = self.settings.auth.jwt_issuers_list or ["helpdesk-ai"]
 
             payload = jwt.decode(
                 token,
                 self._jwt_secret,
                 algorithms=["HS256"],
-                issuer=issuers,
                 options={"require": ["sub", "exp", "iss"]},
             )
+
+            # Validate issuer manually (PyJWT 2.x issuer param doesn't accept lists)
+            token_issuer = payload.get("iss")
+            if token_issuer not in allowed_issuers:
+                raise jwt.InvalidIssuerError("Invalid issuer")
 
             return TokenPayload(
                 user_id=payload["sub"],
