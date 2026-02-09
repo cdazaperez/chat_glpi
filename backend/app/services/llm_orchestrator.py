@@ -252,10 +252,16 @@ class LLMOrchestrator:
         r"(?i)bypass\s+(?:security|authentication)",
     ]
 
-    def __init__(self, glpi_client: GLPIClient):
-        """Initialize the orchestrator."""
+    def __init__(self, glpi_client: GLPIClient, user_context: Optional[Dict[str, Any]] = None):
+        """Initialize the orchestrator.
+
+        Args:
+            glpi_client: GLPI API client
+            user_context: Authenticated user info (user_id, username, email)
+        """
         self.settings = get_settings()
         self.glpi = glpi_client
+        self._user_context = user_context or {}
 
         # Initialize OpenAI client
         client_kwargs = {
@@ -304,7 +310,28 @@ class LLMOrchestrator:
         history: Optional[List[ChatMessage]] = None
     ) -> List[Dict[str, str]]:
         """Build the messages list for the API call."""
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        system_content = SYSTEM_PROMPT
+
+        # Inject authenticated user context so the AI knows who it's helping
+        if self._user_context:
+            user_info_parts = []
+            if self._user_context.get("username"):
+                user_info_parts.append(f"Username: {self._user_context['username']}")
+            if self._user_context.get("email"):
+                user_info_parts.append(f"Email: {self._user_context['email']}")
+            if self._user_context.get("firstname") or self._user_context.get("lastname"):
+                name = f"{self._user_context.get('firstname', '')} {self._user_context.get('lastname', '')}".strip()
+                user_info_parts.append(f"Name: {name}")
+            if user_info_parts:
+                system_content += (
+                    "\n\n**Current authenticated user:**\n"
+                    + "\n".join(f"- {p}" for p in user_info_parts)
+                    + "\n\nWhen searching tickets, results are automatically filtered "
+                    "to show this user's tickets. Use the user's information to "
+                    "personalize responses and for ticket creation."
+                )
+
+        messages = [{"role": "system", "content": system_content}]
 
         # Add conversation history
         if history:
@@ -362,6 +389,7 @@ class LLMOrchestrator:
                     query=arguments["query"],
                     status=arguments.get("status", "solved"),
                     category_id=arguments.get("category_id"),
+                    requester=self._user_context.get("username"),
                     limit=arguments.get("limit", 5)
                 )
                 self._sources_consulted.append("tickets")

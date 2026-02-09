@@ -268,8 +268,13 @@ async def chat(
             request.message
         )
 
-        # Create orchestrator and process message
-        orchestrator = LLMOrchestrator(glpi)
+        # Create orchestrator with user context for personalized searches
+        user_context = {
+            "user_id": user.user_id,
+            "username": user.username,
+            "email": user.email,
+        }
+        orchestrator = LLMOrchestrator(glpi, user_context=user_context)
         response_text, references, suggested_actions, tokens_used = await orchestrator.process_message(
             request.message,
             history

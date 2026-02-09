@@ -435,6 +435,7 @@ class GLPIClient:
         query: str,
         status: Optional[str] = "solved",
         category_id: Optional[int] = None,
+        requester: Optional[str] = None,
         limit: int = 5,
     ) -> List[GLPITicket]:
         """
@@ -444,6 +445,7 @@ class GLPIClient:
             query: Search query
             status: Filter by status ('solved', 'closed', 'all')
             category_id: Optional category filter
+            requester: Optional requester username to filter by
             limit: Maximum results to return
 
         Returns:
@@ -451,7 +453,7 @@ class GLPIClient:
         """
         cache_key = self._cache_key(
             "ticket_search",
-            {"q": query, "status": status, "cat": category_id, "limit": limit}
+            {"q": query, "status": status, "cat": category_id, "req": requester, "limit": limit}
         )
         cached = await self._get_cached(cache_key)
         if cached:
@@ -517,6 +519,15 @@ class GLPIClient:
             params[f"criteria[{criteria_idx}][field]"] = 7
             params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
             params[f"criteria[{criteria_idx}][value]"] = category_id
+            criteria_idx += 1
+
+        # Filter by requester (GLPI field 4 = Requester login name)
+        if requester:
+            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 4
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = requester
+            criteria_idx += 1
 
         try:
             result = await self._request("GET", "search/Ticket", params=params)
