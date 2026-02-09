@@ -316,26 +316,15 @@ class GLPIClient:
         logger.info("Searching GLPI KB", data={"query": query, "category_id": category_id})
 
         # Build search criteria
-        criteria = [
-            {
-                "field": "view",  # Search in searchable fields
-                "searchtype": "contains",
-                "value": query,
-            }
-        ]
-
-        if category_id:
-            criteria.append({
-                "link": "AND",
-                "field": 3,  # Category field
-                "searchtype": "equals",
-                "value": category_id,
-            })
-
+        # Search in Name (field 2) OR Answer/Content (field 4)
         params = {
-            "criteria[0][field]": "view",
+            "criteria[0][field]": 2,        # Name / Title
             "criteria[0][searchtype]": "contains",
             "criteria[0][value]": query,
+            "criteria[1][link]": "OR",
+            "criteria[1][field]": 4,        # Answer / Content
+            "criteria[1][searchtype]": "contains",
+            "criteria[1][value]": query,
             "forcedisplay[0]": 2,  # Name
             "forcedisplay[1]": 4,  # Answer
             "forcedisplay[2]": 3,  # Category
@@ -344,11 +333,12 @@ class GLPIClient:
             "order": "DESC",
         }
 
+        criteria_idx = 2
         if category_id:
-            params["criteria[1][link]"] = "AND"
-            params["criteria[1][field]"] = 3
-            params["criteria[1][searchtype]"] = "equals"
-            params["criteria[1][value]"] = category_id
+            params[f"criteria[{criteria_idx}][link]"] = "AND"
+            params[f"criteria[{criteria_idx}][field]"] = 3
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = category_id
 
         try:
             result = await self._request("GET", "search/KnowbaseItem", params=params)
@@ -474,10 +464,15 @@ class GLPIClient:
         )
 
         # Build search parameters
+        # Search in Name (field 2) OR Content (field 21)
         params = {
-            "criteria[0][field]": "view",
+            "criteria[0][field]": 2,        # Name / Title
             "criteria[0][searchtype]": "contains",
             "criteria[0][value]": query,
+            "criteria[1][link]": "OR",
+            "criteria[1][field]": 21,       # Content / Description
+            "criteria[1][searchtype]": "contains",
+            "criteria[1][value]": query,
             "forcedisplay[0]": 1,   # ID
             "forcedisplay[1]": 2,   # Name
             "forcedisplay[2]": 21,  # Content
@@ -491,7 +486,7 @@ class GLPIClient:
         }
 
         # Add status filter
-        criteria_idx = 1
+        criteria_idx = 2
         if status == "solved":
             params[f"criteria[{criteria_idx}][link]"] = "AND"
             params[f"criteria[{criteria_idx}][field]"] = 12
