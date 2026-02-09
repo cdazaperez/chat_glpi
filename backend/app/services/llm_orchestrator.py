@@ -267,8 +267,17 @@ class LLMOrchestrator:
         if self.settings.openai.org_id:
             client_kwargs["organization"] = self.settings.openai.org_id
 
+        # 'project' kwarg requires openai>=1.25.0; detect support at runtime
         if self.settings.openai.project_id:
-            client_kwargs["project"] = self.settings.openai.project_id
+            import inspect
+            init_params = inspect.signature(AsyncOpenAI.__init__).parameters
+            if "project" in init_params:
+                client_kwargs["project"] = self.settings.openai.project_id
+            else:
+                logger.warning(
+                    "OPENAI_PROJECT_ID is set but installed openai SDK does not "
+                    "support the 'project' parameter. Upgrade to openai>=1.25.0."
+                )
 
         self._client = AsyncOpenAI(**client_kwargs)
         self._references: List[Reference] = []
