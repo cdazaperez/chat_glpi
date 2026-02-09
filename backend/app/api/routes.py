@@ -357,6 +357,14 @@ async def create_ticket(
         data={"title": request.title, "user": user.username},
     )
 
+    # Resolve the authenticated user's GLPI ID for assignment
+    assigned_to_id = None
+    if user.user_id and user.user_id != "anonymous":
+        try:
+            assigned_to_id = int(user.user_id)
+        except (ValueError, TypeError):
+            pass
+
     try:
         ticket_id = await glpi.create_ticket(
             title=request.title,
@@ -365,6 +373,7 @@ async def create_ticket(
             category_id=request.category_id,
             urgency=request.urgency or 3,
             impact=request.impact or 3,
+            assigned_to_id=assigned_to_id,
         )
 
         if ticket_id:

@@ -725,6 +725,8 @@ class GLPIClient:
         category_id: Optional[int] = None,
         urgency: int = 3,
         impact: int = 3,
+        requester_id: Optional[int] = None,
+        assigned_to_id: Optional[int] = None,
     ) -> Optional[int]:
         """
         Create a new ticket in GLPI.
@@ -736,13 +738,18 @@ class GLPIClient:
             category_id: Optional category ID
             urgency: Urgency level (1-5)
             impact: Impact level (1-5)
+            requester_id: GLPI user ID to set as requester
+            assigned_to_id: GLPI user ID to assign as technician
 
         Returns:
             The new ticket ID or None if creation failed
         """
-        logger.info("Creating GLPI ticket", data={"title": title})
+        logger.info(
+            "Creating GLPI ticket",
+            data={"title": title, "requester_id": requester_id, "assigned_to_id": assigned_to_id},
+        )
 
-        payload = {
+        payload: Dict[str, Any] = {
             "input": {
                 "name": title,
                 "content": description,
@@ -755,8 +762,13 @@ class GLPIClient:
         if category_id:
             payload["input"]["itilcategories_id"] = category_id
 
-        # Note: requester handling depends on GLPI configuration
-        # This may need adjustment based on the specific GLPI setup
+        # Set requester via GLPI actor system
+        if requester_id:
+            payload["input"]["_users_id_requester"] = requester_id
+
+        # Assign technician via GLPI actor system
+        if assigned_to_id:
+            payload["input"]["_users_id_assign"] = assigned_to_id
 
         try:
             result = await self._request("POST", "Ticket", json_data=payload)
@@ -770,6 +782,227 @@ class GLPIClient:
         except Exception as e:
             logger.error(f"Error creating ticket: {e}")
             raise GLPIError(f"Failed to create ticket: {e}")
+
+    async def add_ticket_followup(
+        self,
+        ticket_id: int,
+        content: str,
+        user_id: Optional[int] = None,
+        is_private: bool = False,
+    ) -> Optional[int]:
+        """
+        Add a followup to a ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            content: Followup content text
+            user_id: GLPI user ID to attribute the followup to (requires admin on service account)
+            is_private: Whether the followup is private
+
+        Returns:
+            The followup ID or None if creation failed
+        """
+        logger.info("Adding followup to ticket", data={"ticket_id": ticket_id, "user_id": user_id})
+
+        payload: Dict[str, Any] = {
+            "input": {
+                "content": content,
+                "is_private": int(is_private),
+            }
+        }
+
+        if user_id:
+            payload["input"]["users_id"] = user_id
+
+        try:
+            result = await self._request(
+                "POST",
+                f"Ticket/{ticket_id}/ITILFollowup",
+                json_data=payload,
+            )
+
+            if result and "id" in result:
+                logger.info("Followup added", data={"followup_id": result["id"], "ticket_id": ticket_id})
+                return result["id"]
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error adding followup: {e}")
+            raise GLPIError(f"Failed to add followup to ticket #{ticket_id}: {e}")
+
+    async def assign_ticket(
+        self,
+        ticket_id: int,
+        user_id: int,
+        actor_type: int = 2,
+    ) -> bool:
+        """
+        Assign a user to a ticket.
+
+        Args:
+            ticket_id: The ticket ID
+            user_id: The GLPI user ID to assign
+            actor_type: 1=Requester, 2=Assigned (technician), 3=Observer
+
+        Returns:
+            True if assignment succeeded
+        """
+        logger.info(
+            "Assigning user to ticket",
+            data={"ticket_id": ticket_id, "user_id": user_id, "type": actor_type},
+        )
+
+        payload = {
+            "input": {
+                "tickets_id": ticket_id,
+                "users_id": user_id,
+                "type": actor_type,
+            }
+        }
+
+        try:
+            result = await self._request("POST", "Ticket_User", json_data=payload)
+            if result and "id" in result:
+                logger.info("User assigned to ticket", data={"ticket_id": ticket_id, "user_id": user_id})
+                return True
+            return False
+
+        except GLPIError as e:
+            # May fail if user is already assigned — try updating
+            logger.warning(f"Assign failed, user may already be assigned: {e}")
+            return False
+
+    async def get_user_tickets(
+        self,
+        user_id: int,
+        role: str = "requester",
+        status: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[GLPITicket]:
+        """
+        List tickets for a user by role (requester, assigned, or both).
+
+        Args:
+            user_id: GLPI user ID
+            role: 'requester', 'assigned', or 'all'
+            status: Filter status ('new','assigned','pending','solved','closed','open','all')
+            limit: Max results
+
+        Returns:
+            List of tickets
+        """
+        logger.info(
+            "Getting user tickets",
+            data={"user_id": user_id, "role": role, "status": status},
+        )
+
+        # GLPI search fields for Ticket:
+        #   4  = Requester (users_id)
+        #   5  = Assigned technician (users_id)
+        #   12 = Status
+        params: Dict[str, Any] = {
+            "forcedisplay[0]": 1,   # ID
+            "forcedisplay[1]": 2,   # Name
+            "forcedisplay[2]": 12,  # Status
+            "forcedisplay[3]": 15,  # Date opened
+            "forcedisplay[4]": 19,  # Date modified
+            "forcedisplay[5]": 7,   # Category
+            "range": f"0-{limit - 1}",
+            "sort": 19,
+            "order": "DESC",
+        }
+
+        criteria_idx = 0
+
+        if role == "requester":
+            params[f"criteria[{criteria_idx}][field]"] = 4
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
+        elif role == "assigned":
+            params[f"criteria[{criteria_idx}][field]"] = 5
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
+        else:
+            # Both requester and assigned
+            params[f"criteria[{criteria_idx}][field]"] = 4
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
+            params[f"criteria[{criteria_idx}][link]"] = "OR"
+            params[f"criteria[{criteria_idx}][field]"] = 5
+            params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+            params[f"criteria[{criteria_idx}][value]"] = user_id
+            criteria_idx += 1
+
+        # Status filter
+        if status and status != "all":
+            if status == "open":
+                # Open = new, assigned, planned, pending
+                params[f"criteria[{criteria_idx}][link]"] = "AND"
+                params[f"criteria[{criteria_idx}][field]"] = 12
+                params[f"criteria[{criteria_idx}][searchtype]"] = "lessthan"
+                params[f"criteria[{criteria_idx}][value]"] = self.STATUS_SOLVED
+                criteria_idx += 1
+            else:
+                status_map = {
+                    "new": self.STATUS_NEW,
+                    "assigned": self.STATUS_ASSIGNED,
+                    "planned": self.STATUS_PLANNED,
+                    "pending": self.STATUS_PENDING,
+                    "solved": self.STATUS_SOLVED,
+                    "closed": self.STATUS_CLOSED,
+                }
+                if status in status_map:
+                    params[f"criteria[{criteria_idx}][link]"] = "AND"
+                    params[f"criteria[{criteria_idx}][field]"] = 12
+                    params[f"criteria[{criteria_idx}][searchtype]"] = "equals"
+                    params[f"criteria[{criteria_idx}][value]"] = status_map[status]
+                    criteria_idx += 1
+
+        try:
+            result = await self._request("GET", "search/Ticket", params=params)
+            return self._parse_ticket_search_results(result)
+        except (GLPINotFoundError, GLPIError) as e:
+            logger.warning(f"User tickets search returned no results: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"User tickets search failed: {e}")
+            raise
+
+    async def get_user_id_by_name(self, username: str) -> Optional[int]:
+        """
+        Resolve a GLPI username to a user ID.
+
+        Args:
+            username: The GLPI username (login name)
+
+        Returns:
+            The GLPI user ID or None
+        """
+        logger.info("Resolving GLPI user", data={"username": username})
+
+        params = {
+            "criteria[0][field]": 1,  # Name (login)
+            "criteria[0][searchtype]": "equals",
+            "criteria[0][value]": username,
+            "forcedisplay[0]": 2,  # ID
+            "range": "0-0",
+        }
+
+        try:
+            result = await self._request("GET", "search/User", params=params)
+            if result and "data" in result and len(result["data"]) > 0:
+                item = result["data"][0]
+                user_id = item.get("2") or item.get("id")
+                if user_id:
+                    return int(user_id)
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to resolve user '{username}': {e}")
+            return None
 
     # Utility Methods
 

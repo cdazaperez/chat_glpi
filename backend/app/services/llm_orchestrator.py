@@ -26,6 +26,7 @@ from app.models.schemas import (
     GLPIKBArticle,
     GLPITicket,
     GLPISolution,
+    GLPIFollowup,
 )
 from app.services.glpi_client import GLPIClient, GLPIError
 
@@ -147,7 +148,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "glpi_ticket_create",
-            "description": "Create a new support ticket in GLPI. Only use this when the user explicitly requests to create a ticket.",
+            "description": "Create a new support ticket in GLPI. Only use this when the user explicitly requests to create a ticket. The ticket is automatically assigned to the authenticated technician.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -181,6 +182,105 @@ TOOLS = [
                 "required": ["title", "description"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_my_tickets",
+            "description": "List the authenticated user's tickets. Use this when the user asks about their own tickets, ticket status, or open cases.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "role": {
+                        "type": "string",
+                        "enum": ["requester", "assigned", "all"],
+                        "description": "Role filter: 'requester' (tickets I created), 'assigned' (tickets assigned to me), 'all' (both). Default: 'all'",
+                        "default": "all"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["new", "assigned", "pending", "solved", "closed", "open", "all"],
+                        "description": "Status filter. 'open' means all non-resolved statuses. Default: 'all'",
+                        "default": "all"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of tickets to return (default: 10)",
+                        "default": 10
+                    }
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_followups",
+            "description": "Get all followups (updates/comments) for a specific ticket. Use this to show the ticket's activity history.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum followups to return (default: 10)",
+                        "default": 10
+                    }
+                },
+                "required": ["ticket_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_add_followup",
+            "description": "Add a followup (comment/update) to a ticket. The followup is recorded under the authenticated technician's name. Use only when the user explicitly asks to add a note or update to a ticket.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID to add the followup to"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The followup content/message"
+                    },
+                    "is_private": {
+                        "type": "boolean",
+                        "description": "Whether the followup is private (only visible to technicians). Default: false",
+                        "default": False
+                    }
+                },
+                "required": ["ticket_id", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glpi_ticket_assign",
+            "description": "Assign or reassign a ticket to a technician. Requires administrator privileges. Use when the user asks to assign a ticket to someone.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ticket ID"
+                    },
+                    "technician_username": {
+                        "type": "string",
+                        "description": "The GLPI username (login) of the technician to assign"
+                    }
+                },
+                "required": ["ticket_id", "technician_username"]
+            }
+        }
     }
 ]
 
@@ -212,10 +312,14 @@ SYSTEM_PROMPT = """You are a helpful IT support assistant for SkillNet's helpdes
    - NEVER execute commands or make changes without explicit user consent
    - If asked for passwords, credentials, or sensitive data, politely refuse
 
-5. **Ticket Creation**:
+5. **Ticket Creation & Management**:
    - Only offer to create a ticket if no solution is found
    - Require explicit user confirmation before creating any ticket
    - Summarize what will be included in the ticket before creation
+   - Created tickets are automatically assigned to the authenticated technician
+   - Use glpi_my_tickets to show the user their own tickets when asked
+   - Use glpi_ticket_add_followup to add updates under the authenticated user's name
+   - Use glpi_ticket_assign to reassign tickets (requires admin privileges)
 
 6. **Language**:
    - Respond in the same language the user uses
@@ -322,13 +426,16 @@ class LLMOrchestrator:
             if self._user_context.get("firstname") or self._user_context.get("lastname"):
                 name = f"{self._user_context.get('firstname', '')} {self._user_context.get('lastname', '')}".strip()
                 user_info_parts.append(f"Name: {name}")
+            if self._user_context.get("user_id"):
+                user_info_parts.append(f"GLPI User ID: {self._user_context['user_id']}")
             if user_info_parts:
                 system_content += (
                     "\n\n**Current authenticated user:**\n"
                     + "\n".join(f"- {p}" for p in user_info_parts)
-                    + "\n\nWhen searching tickets, results are automatically filtered "
-                    "to show this user's tickets. Use the user's information to "
-                    "personalize responses and for ticket creation."
+                    + "\n\nWhen the user asks about 'my tickets' or their open cases, "
+                    "use glpi_my_tickets. Ticket searches filter by this user. "
+                    "Ticket creation auto-assigns to this technician. "
+                    "Followups are recorded under this user's name."
                 )
 
         messages = [{"role": "system", "content": system_content}]
@@ -420,20 +527,122 @@ class LLMOrchestrator:
                 return result, True
 
             elif tool_name == "glpi_ticket_create":
+                # Auto-assign to authenticated technician
+                assigned_to_id = None
+                user_id_str = self._user_context.get("user_id")
+                if user_id_str and user_id_str != "anonymous":
+                    try:
+                        assigned_to_id = int(user_id_str)
+                    except (ValueError, TypeError):
+                        pass
+
                 ticket_id = await self.glpi.create_ticket(
                     title=arguments["title"],
                     description=arguments["description"],
                     requester_email=arguments.get("requester_email"),
                     category_id=arguments.get("category_id"),
                     urgency=arguments.get("urgency", 3),
-                    impact=arguments.get("impact", 3)
+                    impact=arguments.get("impact", 3),
+                    assigned_to_id=assigned_to_id,
                 )
 
                 if ticket_id:
                     self._add_reference(ReferenceType.TICKET, ticket_id, arguments["title"])
-                    return f"Ticket created successfully with ID: {ticket_id}", True
+                    msg = f"Ticket created successfully with ID: {ticket_id}"
+                    if assigned_to_id:
+                        msg += f" (assigned to {self._user_context.get('username', 'you')})"
+                    return msg, True
                 else:
                     return "Failed to create ticket. Please try again or contact support directly.", False
+
+            elif tool_name == "glpi_my_tickets":
+                user_id_str = self._user_context.get("user_id")
+                if not user_id_str or user_id_str == "anonymous":
+                    return "Cannot list tickets: user is not authenticated.", False
+
+                try:
+                    glpi_user_id = int(user_id_str)
+                except (ValueError, TypeError):
+                    return "Cannot list tickets: invalid user ID.", False
+
+                tickets = await self.glpi.get_user_tickets(
+                    user_id=glpi_user_id,
+                    role=arguments.get("role", "all"),
+                    status=arguments.get("status"),
+                    limit=arguments.get("limit", 10),
+                )
+                self._sources_consulted.append("tickets")
+
+                if not tickets:
+                    role = arguments.get("role", "all")
+                    status = arguments.get("status", "all")
+                    return f"No tickets found for your user (role={role}, status={status}).", True
+
+                result = self._format_my_tickets(tickets)
+                return result, True
+
+            elif tool_name == "glpi_ticket_followups":
+                followups = await self.glpi.get_ticket_followups(
+                    ticket_id=arguments["ticket_id"],
+                    limit=arguments.get("limit", 10),
+                )
+
+                if not followups:
+                    return f"No followups found for ticket #{arguments['ticket_id']}.", True
+
+                result = self._format_followups(followups, arguments["ticket_id"])
+                return result, True
+
+            elif tool_name == "glpi_ticket_add_followup":
+                user_id = None
+                user_id_str = self._user_context.get("user_id")
+                if user_id_str and user_id_str != "anonymous":
+                    try:
+                        user_id = int(user_id_str)
+                    except (ValueError, TypeError):
+                        pass
+
+                followup_id = await self.glpi.add_ticket_followup(
+                    ticket_id=arguments["ticket_id"],
+                    content=arguments["content"],
+                    user_id=user_id,
+                    is_private=arguments.get("is_private", False),
+                )
+
+                if followup_id:
+                    username = self._user_context.get("username", "the system")
+                    return (
+                        f"Followup added to ticket #{arguments['ticket_id']} "
+                        f"(followup ID: {followup_id}, by {username})."
+                    ), True
+                else:
+                    return f"Failed to add followup to ticket #{arguments['ticket_id']}.", False
+
+            elif tool_name == "glpi_ticket_assign":
+                # Resolve technician username to GLPI user ID
+                tech_username = arguments["technician_username"]
+                tech_user_id = await self.glpi.get_user_id_by_name(tech_username)
+
+                if not tech_user_id:
+                    return f"Technician '{tech_username}' not found in GLPI.", False
+
+                success = await self.glpi.assign_ticket(
+                    ticket_id=arguments["ticket_id"],
+                    user_id=tech_user_id,
+                    actor_type=2,  # Assigned technician
+                )
+
+                if success:
+                    return (
+                        f"Ticket #{arguments['ticket_id']} assigned to "
+                        f"{tech_username} (user ID: {tech_user_id})."
+                    ), True
+                else:
+                    return (
+                        f"Could not assign ticket #{arguments['ticket_id']} to "
+                        f"{tech_username}. The user may already be assigned, or "
+                        "you may not have administrator privileges."
+                    ), False
 
             else:
                 return f"Unknown tool: {tool_name}", False
@@ -521,6 +730,31 @@ Description:
 
         return f"""Solution for Ticket #{solution.ticket_id}:
 {content}"""
+
+    def _format_my_tickets(self, tickets: List[GLPITicket]) -> str:
+        """Format user's tickets for the LLM."""
+        results = [f"Your tickets ({len(tickets)} found):"]
+        for ticket in tickets:
+            self._add_reference(ReferenceType.TICKET, ticket.id, ticket.name)
+            results.append(f"\n- Ticket #{ticket.id}: {ticket.name}")
+            results.append(f"  Status: {ticket.status_name or 'Unknown'}")
+            if ticket.date_creation:
+                results.append(f"  Created: {ticket.date_creation}")
+            if ticket.date_mod:
+                results.append(f"  Last modified: {ticket.date_mod}")
+        return "\n".join(results)
+
+    def _format_followups(self, followups: List[Any], ticket_id: int) -> str:
+        """Format ticket followups for the LLM."""
+        results = [f"Followups for ticket #{ticket_id} ({len(followups)} entries):"]
+        for fu in followups:
+            results.append(f"\n- Followup #{fu.id} ({fu.date_creation or 'unknown date'}):")
+            content = fu.content or ""
+            content = re.sub(r'<[^>]+>', '', content)
+            if len(content) > 400:
+                content = content[:400] + "..."
+            results.append(f"  {content}")
+        return "\n".join(results)
 
     def _mask_pii(self, text: str) -> str:
         """Mask potential PII in text."""
