@@ -41,6 +41,11 @@ services:
       - APP_SESSION_TTL_MINUTES=${APP_SESSION_TTL_MINUTES:-60}
       - APP_MAX_MESSAGE_LENGTH=${APP_MAX_MESSAGE_LENGTH:-4000}
       - APP_SECRET_KEY=${APP_SECRET_KEY:-}
+      # Authentication Configuration
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
+      - AUTH_TOKEN_EXPIRY_MINUTES=${AUTH_TOKEN_EXPIRY_MINUTES:-60}
+      - AUTH_JWT_ISSUERS=${AUTH_JWT_ISSUERS:-helpdesk-ai}
       # Redis Configuration
       - REDIS_URL=redis://redis:6379/0
       - REDIS_KB_CACHE_TTL=${REDIS_KB_CACHE_TTL:-3600}
