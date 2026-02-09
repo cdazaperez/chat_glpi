@@ -254,6 +254,23 @@ class GLPIClient:
             if response.status_code == 429:
                 raise GLPIRateLimitError("GLPI rate limit exceeded")
 
+            if response.status_code == 400:
+                # Log the GLPI error body for diagnostics
+                error_body = ""
+                try:
+                    error_body = response.text
+                except Exception:
+                    pass
+                logger.error(
+                    "GLPI bad request",
+                    data={
+                        "endpoint": endpoint,
+                        "method": method,
+                        "response_body": error_body[:500],
+                    }
+                )
+                raise GLPIError(f"GLPI bad request on {endpoint}: {error_body[:200]}")
+
             response.raise_for_status()
 
             if response.content:
@@ -346,7 +363,8 @@ class GLPIClient:
 
             return articles
 
-        except GLPINotFoundError:
+        except (GLPINotFoundError, GLPIError) as e:
+            logger.warning(f"KB search returned no results: {e}")
             return []
         except Exception as e:
             logger.error(f"KB search failed: {e}")
@@ -518,7 +536,8 @@ class GLPIClient:
 
             return tickets
 
-        except GLPINotFoundError:
+        except (GLPINotFoundError, GLPIError) as e:
+            logger.warning(f"Ticket search returned no results: {e}")
             return []
         except Exception as e:
             logger.error(f"Ticket search failed: {e}")
